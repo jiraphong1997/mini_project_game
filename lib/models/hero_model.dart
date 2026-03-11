@@ -1,6 +1,7 @@
 import 'hero_stats.dart';
 import 'item_model.dart';
 import 'skill_model.dart';
+import '../utils/leveling_policy.dart';
 
 class HeroModel {
   final String id;
@@ -8,7 +9,11 @@ class HeroModel {
   final String gender;
   final int age;
   final String backgroundStory;
-  final int rarity; // 1 - 5
+
+  // ระดับความหายาก 1 - 5 จะถูกอัปเกรดอัตโนมัติตาม Level
+  int get rarity {
+    return LevelingPolicy.rarityFromLevel(level);
+  }
 
   int level;
   int currentExp;
@@ -31,7 +36,6 @@ class HeroModel {
     required this.gender,
     required this.age,
     required this.backgroundStory,
-    required this.rarity,
     this.level = 1,
     this.currentExp = 0,
     required this.baseStats,

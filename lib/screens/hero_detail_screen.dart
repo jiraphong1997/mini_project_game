@@ -16,9 +16,8 @@ class HeroDetailScreen extends StatelessWidget {
         gender: 'ชาย',
         age: 24,
         backgroundStory: 'นักรบหนุ่มผู้ไล่ตามความฝันในการพิชิตหอคอยเพื่อค้นหาไอเทมระดับตำนาน',
-        rarity: 4,
-        level: 15,
-        currentExp: 4500,
+        level: 6500, // จะตกอยู่ที่ช่วง Legendary (4 ดาว) ชั่วคราว
+        currentExp: 450000000,
         baseStats: HeroStats(
           maxHp: 1000, currentHp: 1000, 
           atk: 120, def: 80, spd: 50, 
