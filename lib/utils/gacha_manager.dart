@@ -110,9 +110,11 @@ class GachaManager {
       backgroundStory: 'นักผจญภัยที่ถูกอัญเชิญมาจากหินวิญญาณแห่งหอคอยบรรพกาล',
       level: initLevel,
       baseStats: stats,
-      currentStats: stats, // เพิ่งสุ่มมายังไม่มีของสวมใส่
+      currentStats: stats.clone(), // แยก instance ออกจาก baseStats
       aptitudes: aptitudes,
       currentExp: 0,
+      bond: 15 + _rand.nextInt(26),
+      faith: 10 + _rand.nextInt(31),
     );
   }
 }

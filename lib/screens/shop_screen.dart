@@ -5,7 +5,7 @@ class ShopScreen extends StatelessWidget {
   final PlayerData playerData;
   final VoidCallback onDataChanged;
 
-  const ShopScreen({Key? key, required this.playerData, required this.onDataChanged}) : super(key: key);
+  const ShopScreen({super.key, required this.playerData, required this.onDataChanged});
 
   void _buyGold(BuildContext context, int amount, double price) {
     // ในระบบจริงขั้นตอนนี้จะเรียก In-App Purchase

@@ -53,8 +53,12 @@ class HeroStats {
 
 // ตัวอย่างกติกาค่าความถนัด: เกลี่ย % หากผลรวมเกิน 100
 class AptitudeManager {
-  static void updateAptitude(Map<String, double> aptitudes, String targetJob, double increaseValue) {
-    // โค้ดคำนวณลดค่าความถนัดอื่นๆ ลงให้รวมกันเท่ากับ 1.0 (100%)
+  // Updated: คืนค่าเป็น Map ใหม่เพื่อความ Immutability
+  static Map<String, double> updateAptitude(Map<String, double> currentAptitudes, String targetJob, double increaseAmount) {
+    // 1. เพิ่มค่าเป้าหมาย
+    // 2. คำนวณส่วนเกิน
+    // 3. หักลบค่าอื่นๆ เฉลี่ยกันให้ผลรวมกลับมาเป็น 1.0
+    return newAptitudes;
   }
 }
 ```

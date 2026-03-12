@@ -27,19 +27,24 @@ class LevelingPolicy {
   static double get avgInGameSecondsPerLevel =>
       targetInGameSecondsToMax / (maxLevel - 1);
 
-    static int rarityFromLevel(int level) {
-        if (level < star2MinLevel) {
-            return 1;
-        }
-        if (level < star3MinLevel) {
-            return 2;
-        }
-        if (level < star4MinLevel) {
-            return 3;
-        }
-        if (level < star5MinLevel) {
-            return 4;
-        }
-        return 5;
+  static int rarityFromLevel(int level) {
+    if (level < star2MinLevel) {
+      return 1;
     }
+    if (level < star3MinLevel) {
+      return 2;
+    }
+    if (level < star4MinLevel) {
+      return 3;
+    }
+    if (level < star5MinLevel) {
+      return 4;
+    }
+    return 5;
+  }
+
+  static int expRequiredForNextLevel(int level) {
+    final normalizedLevel = level.clamp(1, maxLevel);
+    return 60 + (normalizedLevel * 14) + (normalizedLevel * normalizedLevel * 6);
+  }
 }

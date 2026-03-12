@@ -1,25 +1,64 @@
 class AptitudeManager {
-  // ฟังก์ชันปรับค่าความถนัด ให้ผลรวมทั้งหมดไม่เกิน 1.0 (100%)
-  static void updateAptitude(Map<String, double> aptitudes, String targetJob, double increaseValue) {
-    if (!aptitudes.containsKey(targetJob)) {
-      aptitudes[targetJob] = 0.0;
+  /// อัปเดตค่าความถนัดของเป้าหมาย และเกลี่ยค่าอื่นๆ ลงเพื่อให้ผลรวมยังคงเป็น 100% (1.0)
+  static Map<String, double> updateAptitude(
+    Map<String, double> currentAptitudes,
+    String targetJob,
+    double increaseAmount, // เช่น 0.05 คือเพิ่ม 5%
+  ) {
+    // สร้าง Map ใหม่เพื่อไม่ให้กระทบค่าเดิมโดยตรง (Immutability concept)
+    final newAptitudes = Map<String, double>.from(currentAptitudes);
+
+    // 1. ตรวจสอบว่ามี targetJob หรือไม่ ถ้าไม่มีให้เพิ่มเข้าไป
+    if (!newAptitudes.containsKey(targetJob)) {
+      newAptitudes[targetJob] = 0.0;
     }
 
-    double originalValue = aptitudes[targetJob]!;
-    double newValue = (originalValue + increaseValue).clamp(0.0, 1.0);
-    double difference = newValue - originalValue;
+    // 2. เพิ่มค่าความถนัดเป้าหมาย (Cap ไว้ที่ 1.0)
+    double oldValue = newAptitudes[targetJob]!;
+    double newValue = (oldValue + increaseAmount).clamp(0.0, 1.0);
+    newAptitudes[targetJob] = newValue;
 
-    aptitudes[targetJob] = newValue;
+    // 3. คำนวณส่วนเกินที่ต้องไปหักลบออกจาก Job อื่นๆ
+    // ผลรวมทั้งหมดตอนนี้อาจจะเกิน 1.0
+    double currentSum = newAptitudes.values.reduce((a, b) => a + b);
+    
+    if (currentSum > 1.0) {
+      double excess = currentSum - 1.0;
+      var otherJobs = newAptitudes.keys
+          .where((key) => key != targetJob && newAptitudes[key]! > 0.0)
+          .toList();
 
-    // คำนวณลดค่าตัวอื่นๆ ลงเท่าๆ กัน
-    if (difference > 0 && aptitudes.length > 1) {
-      double deductionPerJob = difference / (aptitudes.length - 1);
-      
-      for (var key in aptitudes.keys.toList()) {
-        if (key != targetJob) {
-          aptitudes[key] = (aptitudes[key]! - deductionPerJob).clamp(0.0, 1.0);
+      while (excess > 0.000001 && otherJobs.isNotEmpty) {
+        final deductPerJob = excess / otherJobs.length;
+        double reducedTotal = 0.0;
+
+        for (final job in otherJobs) {
+          final currentValue = newAptitudes[job]!;
+          final actualDeduction = currentValue < deductPerJob
+              ? currentValue
+              : deductPerJob;
+          newAptitudes[job] = currentValue - actualDeduction;
+          reducedTotal += actualDeduction;
         }
+
+        excess -= reducedTotal;
+        otherJobs = newAptitudes.keys
+            .where((key) => key != targetJob && newAptitudes[key]! > 0.0)
+            .toList();
+      }
+
+      if (otherJobs.isEmpty) {
+        newAptitudes[targetJob] = 1.0;
       }
     }
+
+    final normalizedSum = newAptitudes.values.reduce((a, b) => a + b);
+    final drift = 1.0 - normalizedSum;
+    if (drift.abs() > 0.000001) {
+      newAptitudes[targetJob] =
+          (newAptitudes[targetJob]! + drift).clamp(0.0, 1.0);
+    }
+
+    return newAptitudes;
   }
 }
