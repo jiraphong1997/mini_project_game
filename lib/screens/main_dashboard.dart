@@ -1,9 +1,13 @@
+// ignore_for_file: unnecessary_brace_in_string_interps
+
 import 'package:flutter/material.dart';
 
 import '../models/hero_model.dart';
 import '../models/player_data.dart';
 import '../services/class_progression_service.dart';
+import '../services/class_quest_service.dart';
 import '../services/player_storage_service.dart';
+import 'class_quest_board_screen.dart';
 import 'debug_hero_screen.dart';
 import 'gacha_screen.dart';
 import 'hero_detail_screen.dart';
@@ -118,6 +122,53 @@ class _MainDashboardState extends State<MainDashboard> {
     );
   }
 
+  void _openClassQuestBoard() {
+    final playerData = _playerData;
+    if (playerData == null) {
+      return;
+    }
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ClassQuestBoardScreen(
+          playerData: playerData,
+          onDataChanged: _onDataChanged,
+          onOpenHero: _openHeroDetail,
+        ),
+      ),
+    );
+  }
+
+  String _chainEventLabel(String? eventId) {
+    switch (eventId) {
+      case 'pilgrim_rest':
+        return 'ที่พักผู้แสวงบุญ';
+      case 'relic_echo':
+        return 'เสียงสะท้อนของ relic';
+      case 'vanguard_camp':
+        return 'ค่ายแนวหน้า';
+      case 'council_fire':
+        return 'กองไฟประชุม';
+      case 'hidden_camp':
+        return 'ค่ายลับ';
+      case 'secret_bazaar':
+        return 'ตลาดลับกลางหอ';
+      case 'vault_market':
+        return 'โกดังใต้เงา';
+      case 'living_forge':
+        return 'เตาหลอมมีชีวิต';
+      case 'ember_forge':
+        return 'แกนเพลิงโลหิต';
+      case 'sanctum_echo':
+        return 'เสียงสะท้อนแห่งวิหาร';
+      case 'dawn_vault':
+        return 'คลังรุ่งอรุณ';
+      default:
+        return 'ไม่มี';
+    }
+  }
+
   String get _pageTitle {
     switch (_currentIndex) {
       case 0:
@@ -221,6 +272,12 @@ class _MainDashboardState extends State<MainDashboard> {
     final heroes = playerData.allHeroes;
     final aliveHeroes = heroes.where((hero) => hero.isAlive).length;
     final recoveringHeroes = heroes.where((hero) => hero.isRecovering).length;
+    final heroesWithActiveQuests =
+        heroes.where((hero) => hero.activeClassQuestIds.isNotEmpty).length;
+    final equippedSlots = heroes.fold<int>(
+      0,
+      (sum, hero) => sum + hero.equippedItemIds.length,
+    );
     final averageLevel = heroes.isEmpty
         ? 0
         : heroes.map((hero) => hero.level).reduce((a, b) => a + b) ~/ heroes.length;
@@ -234,6 +291,11 @@ class _MainDashboardState extends State<MainDashboard> {
     final classTrialSeals = playerData.itemQuantity(
       ClassProgressionService.classTrialSealItemId,
     );
+    final pendingChainId = playerData.pendingMajorChainEventIds.isNotEmpty
+        ? playerData.pendingMajorChainEventIds.first
+        : playerData.pendingMajorChainEventId;
+    final pendingChainLabel = _chainEventLabel(pendingChainId);
+    final resolvedChains = playerData.resolvedMajorChainEventIds.length;
 
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -364,7 +426,38 @@ class _MainDashboardState extends State<MainDashboard> {
               Icons.auto_fix_high,
               Colors.indigo,
             ),
+            _buildOverviewCard(
+              'Questing',
+              '$heroesWithActiveQuests',
+              Icons.assignment_outlined,
+              Colors.teal,
+            ),
+            _buildOverviewCard(
+              'Equipped',
+              '$equippedSlots',
+              Icons.shield_moon_outlined,
+              Colors.blueGrey,
+            ),
+            _buildOverviewCard(
+              'Chain Routes',
+              '$resolvedChains',
+              Icons.alt_route,
+              Colors.deepOrange,
+            ),
           ],
+        ),
+        const SizedBox(height: 20),
+        Card(
+          child: ListTile(
+            leading: const Icon(Icons.alt_route),
+            title: const Text('Event Chain'),
+            subtitle: Text(
+              pendingChainLabel == 'None'
+                  ? 'No pending route memory. Your next milestone will use the normal rotation.'
+                  : 'Next milestone is primed for $pendingChainLabel.',
+            ),
+            trailing: Text('$resolvedChains cleared'),
+          ),
         ),
         const SizedBox(height: 20),
         Card(
@@ -402,8 +495,66 @@ class _MainDashboardState extends State<MainDashboard> {
                       icon: const Icon(Icons.storefront_outlined),
                       label: const Text('ไปร้านค้า'),
                     ),
+                    FilledButton.tonalIcon(
+                      onPressed: _openClassQuestBoard,
+                      icon: const Icon(Icons.assignment_turned_in_outlined),
+                      label: const Text('Quest Board'),
+                    ),
                   ],
                 ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 20),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Expanded(
+                      child: Text(
+                        'Class Quest Progress',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: _openClassQuestBoard,
+                      child: const Text('Open Board'),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                if (heroesWithActiveQuests == 0)
+                  const Text('ยังไม่มีฮีโร่ที่กำลังทำ class quest')
+                else
+                  ...heroes
+                      .where((hero) => hero.activeClassQuestIds.isNotEmpty)
+                      .take(4)
+                      .map((hero) {
+                    final questId = hero.activeClassQuestIds.first;
+                    final quest = ClassQuestService.definitionFor(questId);
+                    final objectives = quest.objectives(hero);
+                    final doneCount =
+                        objectives.where((objective) => objective.isComplete).length;
+                    return ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(hero.name),
+                      subtitle: Text(
+                        '${quest.title} • ${doneCount}/${objectives.length} objectives',
+                      ),
+                      trailing: TextButton(
+                        onPressed: () => _openHeroDetail(hero),
+                        child: const Text('ดู'),
+                      ),
+                    );
+                  }),
               ],
             ),
           ),

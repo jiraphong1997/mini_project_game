@@ -86,12 +86,8 @@ class _TowerScreenState extends State<TowerScreen> {
   List<HeroModel> get _availableHeroes =>
       widget.playerData.allHeroes.where((hero) => hero.isAlive).toList();
 
-  bool get _partyNeedsRecovery => _currentParty.members.any(
-        (hero) =>
-            hero.isRecovering ||
-            hero.currentStats.currentHp < hero.currentStats.maxHp ||
-            hero.currentStats.currentEng < hero.currentStats.maxEng,
-      );
+  bool get _partyNeedsRecovery =>
+      _currentParty.members.any((hero) => hero.isRecovering);
 
   Duration get _partyRecoveryRemaining {
     var remaining = Duration.zero;
@@ -158,6 +154,9 @@ class _TowerScreenState extends State<TowerScreen> {
   void _autoFillParty() {
     final strongestHeroes = [..._availableHeroes]
       ..sort((a, b) {
+        if (a.isRecovering != b.isRecovering) {
+          return a.isRecovering ? 1 : -1;
+        }
         final left = a.currentStats.atk + a.currentStats.def + a.currentStats.spd;
         final right = b.currentStats.atk + b.currentStats.def + b.currentStats.spd;
         return right.compareTo(left);
@@ -651,6 +650,7 @@ class _TowerScreenState extends State<TowerScreen> {
               label: const Text('จัดทีมอัตโนมัติ'),
             ),
             FilledButton.icon(
+              key: const Key('tower_start_button'),
               onPressed: _isRunActive || _partyNeedsRecovery ? null : _startRealtimeRun,
               icon: const Icon(Icons.play_arrow_outlined),
               label: const Text('เริ่มสำรวจแบบเรียลไทม์'),

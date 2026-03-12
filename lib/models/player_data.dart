@@ -14,6 +14,9 @@ class PlayerData {
   String? lastTowerSummary;
   List<int> resolvedMajorEventFloors;
   List<String> recentMajorEventIds;
+  String? pendingMajorChainEventId;
+  List<String> pendingMajorChainEventIds;
+  List<String> resolvedMajorChainEventIds;
   
   List<PartyModel> savedParties; 
   List<HeroModel> allHeroes;
@@ -29,10 +32,19 @@ class PlayerData {
     this.lastTowerSummary,
     this.resolvedMajorEventFloors = const [],
     this.recentMajorEventIds = const [],
+    this.pendingMajorChainEventId,
+    this.pendingMajorChainEventIds = const [],
+    this.resolvedMajorChainEventIds = const [],
     this.savedParties = const [],
     this.allHeroes = const [],
     this.inventory = const [],
-  });
+  }) {
+    if (pendingMajorChainEventIds.isEmpty && pendingMajorChainEventId != null) {
+      pendingMajorChainEventIds = [pendingMajorChainEventId!];
+    } else if (pendingMajorChainEventIds.isNotEmpty) {
+      pendingMajorChainEventId = pendingMajorChainEventIds.first;
+    }
+  }
 
   // Base Power = ระดับสิ่งก่อสร้าง + เลเวลฮีโร่ทั้งหมด + พลังปาร์ตี้หรืออะไรทำนองนี้
   int get basePower {
@@ -88,6 +100,7 @@ class PlayerData {
             type: reward.type,
             rarity: reward.rarity,
             statBonus: reward.statBonus?.clone(),
+            equipmentSlot: reward.equipmentSlot,
             quantity: reward.quantity,
           ),
         );
@@ -108,6 +121,11 @@ class PlayerData {
       'lastTowerSummary': lastTowerSummary,
       'resolvedMajorEventFloors': resolvedMajorEventFloors,
       'recentMajorEventIds': recentMajorEventIds,
+      'pendingMajorChainEventId': pendingMajorChainEventIds.isEmpty
+          ? pendingMajorChainEventId
+          : pendingMajorChainEventIds.first,
+      'pendingMajorChainEventIds': pendingMajorChainEventIds,
+      'resolvedMajorChainEventIds': resolvedMajorChainEventIds,
       'savedParties': savedParties.map((party) => party.toMap()).toList(),
       'allHeroes': allHeroes.map((hero) => hero.toMap()).toList(),
       'inventory': inventory.map((item) => item.toMap()).toList(),
@@ -139,6 +157,15 @@ class PlayerData {
       recentMajorEventIds: (map['recentMajorEventIds'] as List<dynamic>? ?? const [])
           .map((id) => id.toString())
           .toList(),
+      pendingMajorChainEventId: map['pendingMajorChainEventId'] as String?,
+      pendingMajorChainEventIds:
+          (map['pendingMajorChainEventIds'] as List<dynamic>? ?? const [])
+              .map((id) => id.toString())
+              .toList(),
+      resolvedMajorChainEventIds:
+          (map['resolvedMajorChainEventIds'] as List<dynamic>? ?? const [])
+              .map((id) => id.toString())
+              .toList(),
       savedParties: partyList,
       allHeroes: heroList,
       inventory: inventory,

@@ -2,6 +2,7 @@ import 'dart:math';
 
 import '../utils/leveling_policy.dart';
 import 'hero_stats.dart';
+import 'item_model.dart';
 
 class HeroModel {
   final String id;
@@ -13,6 +14,8 @@ class HeroModel {
   int level;
   int currentExp;
   int totalExpEarned;
+  int totalTowerFloorsCleared;
+  int totalItemsUsed;
   HeroStats baseStats;
   late HeroStats currentStats;
   HeroStats classBonusStats;
@@ -25,6 +28,10 @@ class HeroModel {
   int faith;
   String currentClass;
   List<String> unlockedClasses;
+  List<String> activeClassQuestIds;
+  List<String> completedClassQuestIds;
+  Map<String, String> equippedItemIds;
+  Map<String, HeroStats> equippedItemBonuses;
   int? recoveryReadyAtEpochMs;
 
   HeroModel({
@@ -36,6 +43,8 @@ class HeroModel {
     this.level = 1,
     this.currentExp = 0,
     this.totalExpEarned = 0,
+    this.totalTowerFloorsCleared = 0,
+    this.totalItemsUsed = 0,
     required this.baseStats,
     HeroStats? currentStats,
     HeroStats? classBonusStats,
@@ -46,12 +55,26 @@ class HeroModel {
     this.faith = 20,
     String? currentClass,
     List<String>? unlockedClasses,
+    List<String>? activeClassQuestIds,
+    List<String>? completedClassQuestIds,
+    Map<String, String>? equippedItemIds,
+    Map<String, HeroStats>? equippedItemBonuses,
     this.recoveryReadyAtEpochMs,
   })  : currentStats = currentStats ?? baseStats.clone(),
         classBonusStats = classBonusStats?.clone() ?? HeroStats.zero(),
         currentClass = currentClass ?? 'novice',
         unlockedClasses = List<String>.from(
           unlockedClasses ?? [currentClass ?? 'novice'],
+        ),
+        activeClassQuestIds = List<String>.from(activeClassQuestIds ?? const []),
+        completedClassQuestIds = List<String>.from(
+          completedClassQuestIds ?? const [],
+        ),
+        equippedItemIds = Map<String, String>.from(equippedItemIds ?? const {}),
+        equippedItemBonuses = Map<String, HeroStats>.fromEntries(
+          (equippedItemBonuses ?? const {}).entries.map(
+            (entry) => MapEntry(entry.key, entry.value.clone()),
+          ),
         ) {
     if (!this.unlockedClasses.contains(this.currentClass)) {
       this.unlockedClasses.add(this.currentClass);
@@ -167,6 +190,65 @@ class HeroModel {
     }
   }
 
+  void startClassQuest(String questId) {
+    if (activeClassQuestIds.contains(questId) ||
+        completedClassQuestIds.contains(questId)) {
+      return;
+    }
+    activeClassQuestIds = [...activeClassQuestIds, questId];
+  }
+
+  void completeClassQuest(String questId) {
+    if (!completedClassQuestIds.contains(questId)) {
+      completedClassQuestIds = [...completedClassQuestIds, questId];
+    }
+    activeClassQuestIds = activeClassQuestIds
+        .where((entry) => entry != questId)
+        .toList();
+  }
+
+  String? equippedItemIdForSlot(EquipmentSlot slot) {
+    return equippedItemIds[slot.name];
+  }
+
+  void equipItem(ItemModel item) {
+    final slot = item.equipmentSlot;
+    final bonus = item.statBonus;
+    if (slot == null || bonus == null) {
+      return;
+    }
+
+    final existingBonus = equippedItemBonuses[slot.name];
+    if (existingBonus != null) {
+      _applyClassBonus(existingBonus, direction: -1);
+    }
+
+    equippedItemIds = {
+      ...equippedItemIds,
+      slot.name: item.id,
+    };
+    equippedItemBonuses = {
+      ...equippedItemBonuses,
+      slot.name: bonus.clone(),
+    };
+    _applyClassBonus(bonus, direction: 1);
+  }
+
+  void unequipSlot(EquipmentSlot slot) {
+    final existingBonus = equippedItemBonuses[slot.name];
+    if (existingBonus == null) {
+      return;
+    }
+
+    _applyClassBonus(existingBonus, direction: -1);
+    final nextIds = Map<String, String>.from(equippedItemIds)
+      ..remove(slot.name);
+    final nextBonuses = Map<String, HeroStats>.from(equippedItemBonuses)
+      ..remove(slot.name);
+    equippedItemIds = nextIds;
+    equippedItemBonuses = nextBonuses;
+  }
+
   @override
   String toString() {
     return '$name (Lv.$level $rarityTitle) - Job: $currentJobRole / Class: $currentClass\n'
@@ -273,6 +355,8 @@ class HeroModel {
       'level': level,
       'currentExp': currentExp,
       'totalExpEarned': totalExpEarned,
+      'totalTowerFloorsCleared': totalTowerFloorsCleared,
+      'totalItemsUsed': totalItemsUsed,
       'baseStats': baseStats.toMap(),
       'currentStats': currentStats.toMap(),
       'classBonusStats': classBonusStats.toMap(),
@@ -283,6 +367,12 @@ class HeroModel {
       'faith': faith,
       'currentClass': currentClass,
       'unlockedClasses': unlockedClasses,
+      'activeClassQuestIds': activeClassQuestIds,
+      'completedClassQuestIds': completedClassQuestIds,
+      'equippedItemIds': equippedItemIds,
+      'equippedItemBonuses': equippedItemBonuses.map(
+        (key, value) => MapEntry(key, value.toMap()),
+      ),
       'recoveryReadyAtEpochMs': recoveryReadyAtEpochMs,
     };
   }
@@ -299,6 +389,8 @@ class HeroModel {
       level: map['level'] as int,
       currentExp: map['currentExp'] as int,
       totalExpEarned: map['totalExpEarned'] as int? ?? 0,
+      totalTowerFloorsCleared: map['totalTowerFloorsCleared'] as int? ?? 0,
+      totalItemsUsed: map['totalItemsUsed'] as int? ?? 0,
       baseStats: HeroStats.fromMap(
         Map<String, dynamic>.from(map['baseStats'] as Map),
       ),
@@ -321,6 +413,26 @@ class HeroModel {
       unlockedClasses: (map['unlockedClasses'] as List<dynamic>? ?? const ['novice'])
           .map((value) => value.toString())
           .toList(),
+      activeClassQuestIds: (map['activeClassQuestIds'] as List<dynamic>? ?? const [])
+          .map((value) => value.toString())
+          .toList(),
+      completedClassQuestIds:
+          (map['completedClassQuestIds'] as List<dynamic>? ?? const [])
+              .map((value) => value.toString())
+              .toList(),
+      equippedItemIds: Map<String, String>.from(
+        (map['equippedItemIds'] as Map?)?.map(
+              (key, value) => MapEntry(key.toString(), value.toString()),
+            ) ??
+            const {},
+      ),
+      equippedItemBonuses: ((map['equippedItemBonuses'] as Map?) ?? const {})
+          .map(
+            (key, value) => MapEntry(
+              key.toString(),
+              HeroStats.fromMap(Map<String, dynamic>.from(value as Map)),
+            ),
+          ),
       recoveryReadyAtEpochMs: map['recoveryReadyAtEpochMs'] as int?,
     );
   }

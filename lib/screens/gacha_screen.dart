@@ -43,7 +43,12 @@ class _GachaScreenState extends State<GachaScreen> {
 
     setState(() {
       widget.playerData.gold -= cost;
-      _recentHero = GachaManager.rollGacha(isSpecial: isSpecial);
+      _recentHero = GachaManager.rollGacha(
+        isSpecial: isSpecial,
+        existingNames: widget.playerData.allHeroes
+            .map((hero) => hero.name)
+            .toSet(),
+      );
       widget.playerData.allHeroes = List.from(widget.playerData.allHeroes)
         ..add(_recentHero!);
     });
