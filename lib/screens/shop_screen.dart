@@ -27,11 +27,12 @@ class ShopScreen extends StatelessWidget {
   }
 
   void _buyItem(BuildContext context, ItemCatalogEntry item) {
+    final price = ItemUsageService.buyPriceFor(playerData, item.id);
     final bought = ItemUsageService.buyItem(playerData, item.id);
     if (!bought) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Silver ไม่พอสำหรับซื้อ ${item.name}'),
+          content: Text('Silver ไม่พอสำหรับซื้อ ${item.name} ต้องใช้ $price'),
           backgroundColor: Colors.red,
         ),
       );
@@ -86,8 +87,13 @@ class ShopScreen extends StatelessWidget {
     final consumableCatalog = ItemUsageService.catalog
         .where((item) => item.type == ItemType.consumable)
         .toList();
+    final utilityCatalog = ItemUsageService.catalog
+        .where((item) => item.type == ItemType.warpItem)
+        .toList();
     final equipmentCatalog = ItemUsageService.catalog
-        .where((item) => item.type == ItemType.weapon || item.type == ItemType.armor)
+        .where(
+          (item) => item.type == ItemType.weapon || item.type == ItemType.armor,
+        )
         .toList();
     final materialInventory = inventory
         .where((item) => item.type == ItemType.material)
@@ -95,8 +101,13 @@ class ShopScreen extends StatelessWidget {
     final consumableInventory = inventory
         .where((item) => item.type == ItemType.consumable)
         .toList();
+    final utilityInventory = inventory
+        .where((item) => item.type == ItemType.warpItem)
+        .toList();
     final equipmentInventory = inventory
-        .where((item) => item.type == ItemType.weapon || item.type == ItemType.armor)
+        .where(
+          (item) => item.type == ItemType.weapon || item.type == ItemType.armor,
+        )
         .toList();
 
     return Column(
@@ -106,17 +117,18 @@ class ShopScreen extends StatelessWidget {
           color: Colors.amber[100],
           child: Column(
             children: [
-              const Text(
-                'ทรัพยากรปัจจุบัน',
-                style: TextStyle(fontSize: 16),
-              ),
+              const Text('ทรัพยากรปัจจุบัน', style: TextStyle(fontSize: 16)),
               const SizedBox(height: 8),
               Wrap(
                 spacing: 16,
                 runSpacing: 12,
                 alignment: WrapAlignment.center,
                 children: [
-                  _resourceBadge(Icons.monetization_on, 'Gold', '${playerData.gold}'),
+                  _resourceBadge(
+                    Icons.monetization_on,
+                    'Gold',
+                    '${playerData.gold}',
+                  ),
                   _resourceBadge(
                     Icons.payments_outlined,
                     'Silver',
@@ -139,25 +151,29 @@ class ShopScreen extends StatelessWidget {
               _buildPackageCard(context, 'ถุงทองเล็ก', 500, 35.0),
               _buildPackageCard(context, 'หีบทอง', 1500, 99.0),
               _buildPackageCard(context, 'กองคาราวานทองคำ', 5000, 299.0),
-              _buildPackageCard(
-                context,
-                'พระคลังมหาสมบัติ',
-                15000,
-                799.0,
-              ),
+              _buildPackageCard(context, 'พระคลังมหาสมบัติ', 15000, 799.0),
               const SizedBox(height: 24),
               const Text(
                 'ตลาดซื้อของ',
                 style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 8),
-              const Text('แยกตลาดของใช้และอุปกรณ์เพื่อให้จัดการ economy ได้ชัดขึ้น'),
+              const Text(
+                'แยกตลาดของใช้และอุปกรณ์เพื่อให้จัดการ economy ได้ชัดขึ้น',
+              ),
               const SizedBox(height: 16),
               _buildCatalogSection(
                 context,
                 title: 'ตลาดของใช้และเสบียง',
                 icon: Icons.local_drink_outlined,
                 entries: consumableCatalog,
+              ),
+              const SizedBox(height: 16),
+              _buildCatalogSection(
+                context,
+                title: 'ตลาดของเตรียมลุยและหินวาป',
+                icon: Icons.hexagon_outlined,
+                entries: utilityCatalog,
               ),
               const SizedBox(height: 16),
               _buildCatalogSection(
@@ -231,6 +247,12 @@ class ShopScreen extends StatelessWidget {
                 ),
                 _buildSellSection(
                   context,
+                  title: 'ตลาดของเตรียมลุย/หินวาป',
+                  icon: Icons.travel_explore_outlined,
+                  items: utilityInventory,
+                ),
+                _buildSellSection(
+                  context,
                   title: 'ตลาดอุปกรณ์',
                   icon: Icons.shield_outlined,
                   items: equipmentInventory,
@@ -285,7 +307,10 @@ class ShopScreen extends StatelessWidget {
               Text(label, style: const TextStyle(fontSize: 12)),
               Text(
                 value,
-                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ],
           ),
@@ -295,11 +320,13 @@ class ShopScreen extends StatelessWidget {
   }
 
   String _recipeMaterialsText(CraftingRecipe recipe) {
-    return recipe.materials.entries.map((entry) {
-      final definition = ItemUsageService.definitionFor(entry.key);
-      final label = definition?.name ?? entry.key;
-      return '$label x${entry.value}';
-    }).join(', ');
+    return recipe.materials.entries
+        .map((entry) {
+          final definition = ItemUsageService.definitionFor(entry.key);
+          final label = definition?.name ?? entry.key;
+          return '$label x${entry.value}';
+        })
+        .join(', ');
   }
 
   Widget _buildCatalogSection(
@@ -326,8 +353,9 @@ class ShopScreen extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 10),
-        ...entries.map(
-          (item) => Card(
+        ...entries.map((item) {
+          final price = ItemUsageService.buyPriceFor(playerData, item.id);
+          return Card(
             margin: const EdgeInsets.only(bottom: 12),
             child: ListTile(
               leading: const Icon(Icons.inventory_2_outlined),
@@ -335,7 +363,9 @@ class ShopScreen extends StatelessWidget {
                 item.name,
                 style: const TextStyle(fontWeight: FontWeight.bold),
               ),
-              subtitle: Text('${item.description}\n${item.silverCost} Silver'),
+              subtitle: Text(
+                '${item.description}\nราคาตลาดตอนนี้ $price Silver',
+              ),
               trailing: ElevatedButton(
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.indigo,
@@ -345,8 +375,8 @@ class ShopScreen extends StatelessWidget {
                 child: const Text('ซื้อ'),
               ),
             ),
-          ),
-        ),
+          );
+        }),
       ],
     );
   }
@@ -383,8 +413,12 @@ class ShopScreen extends StatelessWidget {
 
   Widget _buildSellCard(BuildContext context, ItemModel item) {
     final definition = ItemUsageService.definitionFor(item.id);
-    final silverValue = definition?.sellSilverValue ?? 10;
-    final goldValue = definition?.sellGoldValue ?? 0;
+    final quote = ItemUsageService.sellQuoteFor(
+      playerData,
+      item.id,
+      quantity: 1,
+      marketType: 'shop',
+    );
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
@@ -411,9 +445,9 @@ class ShopScreen extends StatelessWidget {
             Text(definition?.description ?? 'ไอเทมที่ได้มาจากการสำรวจ'),
             const SizedBox(height: 6),
             Text(
-              goldValue > 0
-                  ? 'ราคาขายต่อชิ้น: $silverValue Silver + $goldValue Gold'
-                  : 'ราคาขายต่อชิ้น: $silverValue Silver',
+              quote.gold > 0
+                  ? 'ราคารับซื้อต่อชิ้น: ${quote.silver} Silver + ${quote.gold} Gold'
+                  : 'ราคารับซื้อต่อชิ้น: ${quote.silver} Silver',
             ),
             const SizedBox(height: 10),
             Wrap(

@@ -3,6 +3,7 @@ import 'package:mini_project_game/models/hero_model.dart';
 import 'package:mini_project_game/models/hero_stats.dart';
 import 'package:mini_project_game/models/item_model.dart';
 import 'package:mini_project_game/services/class_progression_service.dart';
+import 'package:mini_project_game/services/skill_progression_service.dart';
 
 void main() {
   test('HeroModel gainExp should level up and improve stats', () {
@@ -99,5 +100,33 @@ void main() {
     hero.unequipSlot(EquipmentSlot.weapon);
     expect(hero.equippedItemIdForSlot(EquipmentSlot.weapon), isNull);
     expect(hero.currentStats.atk, HeroStats.initial().atk);
+  });
+
+  test('HeroModel should track mana and status-ready skill state', () {
+    final hero = HeroModel(
+      id: 'hero_4',
+      name: 'Caster',
+      gender: 'เธ',
+      age: 21,
+      backgroundStory: 'Test',
+      level: 18,
+      baseStats: HeroStats.initial(),
+      currentStats: HeroStats.initial(),
+      aptitudes: const {'Priest': 1.0},
+      currentClass: 'acolyte',
+      unlockedClasses: const ['novice', 'acolyte'],
+    );
+
+    hero.currentStats.currentHp = 20;
+    hero.currentStats.currentEng = 10;
+    hero.addStatusEffect('poisoned');
+    hero.refreshBodyCondition();
+
+    final skills = SkillProgressionService.unlockedSkillsFor(hero);
+
+    expect(hero.maxMana, greaterThan(0));
+    expect(hero.currentMana, greaterThan(0));
+    expect(hero.bodyCondition, 'poisoned');
+    expect(skills.any((skill) => skill.role == 'heal'), isTrue);
   });
 }

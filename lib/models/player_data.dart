@@ -1,3 +1,4 @@
+import 'agent_ai_settings.dart';
 import 'party_model.dart';
 import 'hero_model.dart';
 import 'item_model.dart';
@@ -5,22 +6,26 @@ import 'item_model.dart';
 class PlayerData {
   String playerId;
   String playerName;
-  
+
   int silver; // เงินในเกม ใช้จ่ายในร้านค้าและอัปเกรด
-  int gold;   // ค่าเงินพรีเมียม ใช้แลก Silver และตั๋วสุ่มฮีโร่
-  
-  int baseBuildingLevel; 
+  int gold; // ค่าเงินพรีเมียม ใช้แลก Silver และตั๋วสุ่มฮีโร่
+
+  int baseBuildingLevel;
   int highestTowerFloor;
+  int currentTowerRunId;
   String? lastTowerSummary;
   List<int> resolvedMajorEventFloors;
   List<String> recentMajorEventIds;
   String? pendingMajorChainEventId;
   List<String> pendingMajorChainEventIds;
   List<String> resolvedMajorChainEventIds;
-  
-  List<PartyModel> savedParties; 
+
+  List<PartyModel> savedParties;
   List<HeroModel> allHeroes;
   List<ItemModel> inventory;
+  Map<String, int> eventMarketStock;
+  Map<String, int> eventMarketRerollCounts;
+  AgentAiSettings aiSettings;
 
   PlayerData({
     required this.playerId,
@@ -29,6 +34,7 @@ class PlayerData {
     this.gold = 0,
     this.baseBuildingLevel = 1,
     this.highestTowerFloor = 0,
+    this.currentTowerRunId = 0,
     this.lastTowerSummary,
     this.resolvedMajorEventFloors = const [],
     this.recentMajorEventIds = const [],
@@ -38,7 +44,10 @@ class PlayerData {
     this.savedParties = const [],
     this.allHeroes = const [],
     this.inventory = const [],
-  }) {
+    this.eventMarketStock = const {},
+    this.eventMarketRerollCounts = const {},
+    AgentAiSettings? aiSettings,
+  }) : aiSettings = aiSettings ?? const AgentAiSettings() {
     if (pendingMajorChainEventIds.isEmpty && pendingMajorChainEventId != null) {
       pendingMajorChainEventIds = [pendingMajorChainEventId!];
     } else if (pendingMajorChainEventIds.isNotEmpty) {
@@ -51,9 +60,9 @@ class PlayerData {
     int totalHeroPower = 0;
     for (var hero in allHeroes) {
       totalHeroPower += hero.level * 10; // สมมติสูตร: ฮีโร่ 1 เลเวล = 10 power
-      totalHeroPower += hero.currentStats.atk + hero.currentStats.def; 
+      totalHeroPower += hero.currentStats.atk + hero.currentStats.def;
     }
-    
+
     // พลังรวมฐาน = โบนัสเลเวลของฐานบ้าน + พลังฮีโร่รวมทั้งหมด
     return (baseBuildingLevel * 100) + totalHeroPower;
   }
@@ -110,6 +119,35 @@ class PlayerData {
     inventory = merged;
   }
 
+  int eventStockFor(String stockKey) => eventMarketStock[stockKey] ?? 0;
+
+  void setEventStock(String stockKey, int quantity) {
+    eventMarketStock = {...eventMarketStock, stockKey: quantity};
+  }
+
+  bool consumeEventStock(String stockKey, {int quantity = 1}) {
+    final current = eventMarketStock[stockKey] ?? 0;
+    if (current < quantity || quantity <= 0) {
+      return false;
+    }
+
+    final next = current - quantity;
+    final updated = Map<String, int>.from(eventMarketStock);
+    updated[stockKey] = next <= 0 ? 0 : next;
+    eventMarketStock = updated;
+    return true;
+  }
+
+  int eventRerollCountFor(String rerollKey) =>
+      eventMarketRerollCounts[rerollKey] ?? 0;
+
+  void incrementEventReroll(String rerollKey) {
+    eventMarketRerollCounts = {
+      ...eventMarketRerollCounts,
+      rerollKey: (eventMarketRerollCounts[rerollKey] ?? 0) + 1,
+    };
+  }
+
   Map<String, dynamic> toMap() {
     return {
       'playerId': playerId,
@@ -118,6 +156,7 @@ class PlayerData {
       'gold': gold,
       'baseBuildingLevel': baseBuildingLevel,
       'highestTowerFloor': highestTowerFloor,
+      'currentTowerRunId': currentTowerRunId,
       'lastTowerSummary': lastTowerSummary,
       'resolvedMajorEventFloors': resolvedMajorEventFloors,
       'recentMajorEventIds': recentMajorEventIds,
@@ -129,18 +168,30 @@ class PlayerData {
       'savedParties': savedParties.map((party) => party.toMap()).toList(),
       'allHeroes': allHeroes.map((hero) => hero.toMap()).toList(),
       'inventory': inventory.map((item) => item.toMap()).toList(),
+      'eventMarketStock': eventMarketStock,
+      'eventMarketRerollCounts': eventMarketRerollCounts,
+      'aiSettings': aiSettings.toMap(),
     };
   }
 
   factory PlayerData.fromMap(Map<String, dynamic> map) {
     final heroList = (map['allHeroes'] as List<dynamic>? ?? const [])
-        .map((hero) => HeroModel.fromMap(Map<String, dynamic>.from(hero as Map)))
+        .map(
+          (hero) => HeroModel.fromMap(Map<String, dynamic>.from(hero as Map)),
+        )
         .toList();
     final partyList = (map['savedParties'] as List<dynamic>? ?? const [])
-        .map((party) => PartyModel.fromMap(Map<String, dynamic>.from(party as Map), heroList))
+        .map(
+          (party) => PartyModel.fromMap(
+            Map<String, dynamic>.from(party as Map),
+            heroList,
+          ),
+        )
         .toList();
     final inventory = (map['inventory'] as List<dynamic>? ?? const [])
-        .map((item) => ItemModel.fromMap(Map<String, dynamic>.from(item as Map)))
+        .map(
+          (item) => ItemModel.fromMap(Map<String, dynamic>.from(item as Map)),
+        )
         .toList();
 
     return PlayerData(
@@ -150,13 +201,16 @@ class PlayerData {
       gold: map['gold'] as int? ?? 0,
       baseBuildingLevel: map['baseBuildingLevel'] as int? ?? 1,
       highestTowerFloor: map['highestTowerFloor'] as int? ?? 0,
+      currentTowerRunId: map['currentTowerRunId'] as int? ?? 0,
       lastTowerSummary: map['lastTowerSummary'] as String?,
-      resolvedMajorEventFloors: (map['resolvedMajorEventFloors'] as List<dynamic>? ?? const [])
-          .map((floor) => floor as int)
-          .toList(),
-      recentMajorEventIds: (map['recentMajorEventIds'] as List<dynamic>? ?? const [])
-          .map((id) => id.toString())
-          .toList(),
+      resolvedMajorEventFloors:
+          (map['resolvedMajorEventFloors'] as List<dynamic>? ?? const [])
+              .map((floor) => floor as int)
+              .toList(),
+      recentMajorEventIds:
+          (map['recentMajorEventIds'] as List<dynamic>? ?? const [])
+              .map((id) => id.toString())
+              .toList(),
       pendingMajorChainEventId: map['pendingMajorChainEventId'] as String?,
       pendingMajorChainEventIds:
           (map['pendingMajorChainEventIds'] as List<dynamic>? ?? const [])
@@ -169,6 +223,21 @@ class PlayerData {
       savedParties: partyList,
       allHeroes: heroList,
       inventory: inventory,
+      eventMarketStock: Map<String, int>.from(
+        ((map['eventMarketStock'] as Map?) ?? const {}).map(
+          (key, value) => MapEntry(key.toString(), value as int),
+        ),
+      ),
+      eventMarketRerollCounts: Map<String, int>.from(
+        ((map['eventMarketRerollCounts'] as Map?) ?? const {}).map(
+          (key, value) => MapEntry(key.toString(), value as int),
+        ),
+      ),
+      aiSettings: map['aiSettings'] == null
+          ? const AgentAiSettings()
+          : AgentAiSettings.fromMap(
+              Map<String, dynamic>.from(map['aiSettings'] as Map),
+            ),
     );
   }
 }

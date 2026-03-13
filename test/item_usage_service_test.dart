@@ -42,9 +42,7 @@ void main() {
     final player = PlayerData(
       playerId: 'player_2',
       playerName: 'Tester',
-      inventory: [
-        ItemUsageService.definitionFor('steel_blade')!.toItemModel(),
-      ],
+      inventory: [ItemUsageService.definitionFor('steel_blade')!.toItemModel()],
     );
 
     final result = ItemUsageService.equipItem(player, hero, 'steel_blade');
@@ -62,6 +60,11 @@ void main() {
         ItemUsageService.definitionFor('tower_ore_3')!.toItemModel(quantity: 2),
       ],
     );
+    final quote = ItemUsageService.sellQuoteFor(
+      player,
+      'tower_ore_3',
+      quantity: 2,
+    );
 
     final result = ItemUsageService.sellItem(
       player,
@@ -70,11 +73,11 @@ void main() {
     );
 
     expect(result.success, isTrue);
-    expect(result.silverEarned, 120);
-    expect(result.goldEarned, 2);
+    expect(result.silverEarned, quote.silver);
+    expect(result.goldEarned, quote.gold);
     expect(player.itemQuantity('tower_ore_3'), 0);
-    expect(player.silver, 120);
-    expect(player.gold, 2);
+    expect(player.silver, quote.silver);
+    expect(player.gold, quote.gold);
   });
 
   test('Crafting should consume materials and add crafted output', () {
@@ -95,5 +98,58 @@ void main() {
     expect(player.itemQuantity('cloth_scrap'), 0);
     expect(player.itemQuantity('ration_pack'), 1);
     expect(player.silver, 90);
+  });
+
+  test('Dynamic buy price should react to scarcity and rarity', () {
+    final scarcePlayer = PlayerData(playerId: 'player_5', playerName: 'Scarce');
+    final stockedPlayer = PlayerData(
+      playerId: 'player_6',
+      playerName: 'Stocked',
+      inventory: [
+        ItemUsageService.definitionFor(
+          'battle_tonic',
+        )!.toItemModel(quantity: 8),
+      ],
+    );
+
+    final scarcePrice = ItemUsageService.buyPriceFor(
+      scarcePlayer,
+      'battle_tonic',
+    );
+    final stockedPrice = ItemUsageService.buyPriceFor(
+      stockedPlayer,
+      'battle_tonic',
+    );
+    final rarePrice = ItemUsageService.buyPriceFor(
+      scarcePlayer,
+      'tower_ore_4',
+      marketType: 'vault_market',
+    );
+
+    expect(scarcePrice, greaterThan(stockedPrice));
+    expect(rarePrice, greaterThan(scarcePrice));
+  });
+
+  test('Event market offers should be generated with premium pricing', () {
+    final player = PlayerData(
+      playerId: 'player_7',
+      playerName: 'Event Buyer',
+      silver: 5000,
+      gold: 10,
+    );
+
+    final merchantOffers = ItemUsageService.merchantOffersFor(player, 15);
+    final forgeOffers = ItemUsageService.blacksmithOffersFor(
+      player,
+      20,
+      premium: true,
+    );
+
+    expect(merchantOffers, isNotEmpty);
+    expect(forgeOffers, isNotEmpty);
+    expect(
+      forgeOffers.any((offer) => offer.goldCost > 0 || offer.silverCost > 0),
+      isTrue,
+    );
   });
 }

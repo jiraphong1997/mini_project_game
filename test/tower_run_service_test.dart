@@ -1,71 +1,76 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mini_project_game/models/hero_model.dart';
 import 'package:mini_project_game/models/hero_stats.dart';
+import 'package:mini_project_game/models/item_model.dart';
 import 'package:mini_project_game/models/party_model.dart';
 import 'package:mini_project_game/models/player_data.dart';
+import 'package:mini_project_game/services/item_usage_service.dart';
 import 'package:mini_project_game/services/tower_run_service.dart';
 
 void main() {
-  test('TowerRunService should grant progression rewards on successful run', () {
-    final hero = HeroModel(
-      id: 'hero_1',
-      name: 'อาร์เธอร์',
-      gender: 'ชาย',
-      age: 22,
-      backgroundStory: 'Test hero',
-      level: 10,
-      baseStats: HeroStats(
-        maxHp: 500,
-        currentHp: 500,
-        atk: 120,
-        def: 100,
-        spd: 80,
-        maxEng: 100,
-        currentEng: 100,
-        luk: 30,
-      ),
-      currentStats: HeroStats(
-        maxHp: 500,
-        currentHp: 500,
-        atk: 120,
-        def: 100,
-        spd: 80,
-        maxEng: 100,
-        currentEng: 100,
-        luk: 30,
-      ),
-      aptitudes: const {'Knight': 1.0},
-    );
+  test(
+    'TowerRunService should grant progression rewards on successful run',
+    () {
+      final hero = HeroModel(
+        id: 'hero_1',
+        name: 'อาร์เธอร์',
+        gender: 'ชาย',
+        age: 22,
+        backgroundStory: 'Test hero',
+        level: 10,
+        baseStats: HeroStats(
+          maxHp: 500,
+          currentHp: 500,
+          atk: 120,
+          def: 100,
+          spd: 80,
+          maxEng: 100,
+          currentEng: 100,
+          luk: 30,
+        ),
+        currentStats: HeroStats(
+          maxHp: 500,
+          currentHp: 500,
+          atk: 120,
+          def: 100,
+          spd: 80,
+          maxEng: 100,
+          currentEng: 100,
+          luk: 30,
+        ),
+        aptitudes: const {'Knight': 1.0},
+      );
 
-    final party = PartyModel(
-      partyId: 'main',
-      partyName: 'Main Expedition',
-      members: [hero],
-      formation: 'assault',
-    );
+      final party = PartyModel(
+        partyId: 'main',
+        partyName: 'Main Expedition',
+        members: [hero],
+        formation: 'assault',
+      );
 
-    final player = PlayerData(
-      playerId: 'player_1',
-      playerName: 'Tester',
-      savedParties: [party],
-      allHeroes: [hero],
-    );
+      final player = PlayerData(
+        playerId: 'player_1',
+        playerName: 'Tester',
+        savedParties: [party],
+        allHeroes: [hero],
+      );
 
-    final result = TowerRunService.run(
-      playerData: player,
-      party: party,
-      maxFloorsPerRun: 1,
-    );
+      final result = TowerRunService.run(
+        playerData: player,
+        party: party,
+        maxFloorsPerRun: 1,
+      );
 
-    expect(result.clearedFloors, greaterThanOrEqualTo(0));
-    expect(result.expPerHero, greaterThanOrEqualTo(0));
-    expect(player.lastTowerSummary, isNotNull);
+      expect(result.clearedFloors, greaterThanOrEqualTo(0));
+      expect(result.expPerHero, greaterThanOrEqualTo(0));
+      expect(player.lastTowerSummary, isNotNull);
 
-    if (result.clearedFloors > 0) {
-      expect(player.inventory, isNotEmpty);
-      expect(player.silver, greaterThan(0));
-    }
-  });
+      if (result.clearedFloors > 0) {
+        expect(player.inventory, isNotEmpty);
+        expect(player.silver, greaterThan(0));
+      }
+    },
+  );
 
   test('Advice charges should scale with party bond and faith', () {
     final trustedHero = HeroModel(
@@ -93,7 +98,10 @@ void main() {
       allHeroes: [trustedHero],
     );
 
-    expect(TowerRunService.adviceChargesForParty(party), greaterThanOrEqualTo(3));
+    expect(
+      TowerRunService.adviceChargesForParty(party),
+      greaterThanOrEqualTo(3),
+    );
     expect(
       TowerRunService.maybeCreateMajorEvent(playerData: player, floor: 5),
       isNotNull,
@@ -451,6 +459,69 @@ void main() {
     expect(vaultEvent?.id, 'vault_market');
   });
 
+  test('Market chain events should generate purchasable offers', () {
+    final hero = HeroModel(
+      id: 'hero_9b',
+      name: 'Merchant Scout',
+      gender: 'ชาย',
+      age: 23,
+      backgroundStory: 'Event inventory tester',
+      baseStats: HeroStats.initial(),
+      currentStats: HeroStats.initial(),
+      aptitudes: const {'Scout': 1.0},
+      equippedItemIds: const {'relic': 'wayfinder_compass'},
+      currentClass: 'ranger',
+      unlockedClasses: const ['novice', 'skirmisher', 'ranger'],
+    );
+    final party = PartyModel(
+      partyId: 'market_party_2',
+      partyName: 'Market Party 2',
+      members: [hero],
+    );
+    final player = PlayerData(
+      playerId: 'player_8b',
+      playerName: 'Market Buyer',
+      silver: 4000,
+      gold: 8,
+      savedParties: [party],
+      allHeroes: [hero],
+    );
+    const hiddenCamp = TowerDecisionEvent(
+      id: 'hidden_camp',
+      title: 'Hidden Camp',
+      description: '',
+      options: [],
+    );
+
+    TowerRunService.applyDecision(
+      playerData: player,
+      party: party,
+      floor: 10,
+      event: hiddenCamp,
+      optionId: 'recruit_guides',
+    );
+
+    final bazaarEvent = TowerRunService.maybeCreateMajorEvent(
+      playerData: player,
+      floor: 15,
+    );
+    final buyOption = bazaarEvent!.options.firstWhere(
+      (option) => option.id.startsWith('market_buy:'),
+    );
+
+    final outcome = TowerRunService.applyDecision(
+      playerData: player,
+      party: party,
+      floor: 15,
+      event: bazaarEvent,
+      optionId: buyOption.id,
+    );
+
+    expect(outcome.immediateItems, isNotEmpty);
+    expect(outcome.silverDelta, lessThan(0));
+    expect(player.pendingMajorChainEventIds, contains('vault_market'));
+  });
+
   test('Equipment effects should appear in floor battle logs', () {
     final hero = HeroModel(
       id: 'hero_10',
@@ -506,9 +577,299 @@ void main() {
     );
 
     expect(
-      outcome.logLines.any((line) => line.contains('อุปกรณ์') || line.contains('เธญเธธเธ')),
+      outcome.logLines.any(
+        (line) => line.contains('อุปกรณ์') || line.contains('เธญเธธเธ'),
+      ),
+      isTrue,
+    );
+    expect(
+      outcome.logLines.any((line) => line.contains('ศัตรูประจำชั้น:')),
       isTrue,
     );
     expect(outcome.partyPower, greaterThan(0));
+  });
+
+  test('Event market stock should deplete within the same run', () {
+    final hero = HeroModel(
+      id: 'hero_stock',
+      name: 'Stock Tester',
+      gender: 'เธเธฒเธข',
+      age: 24,
+      backgroundStory: 'Stock test hero',
+      baseStats: HeroStats.initial(),
+      currentStats: HeroStats.initial(),
+      aptitudes: const {'Scout': 1.0},
+    );
+    final party = PartyModel(
+      partyId: 'stock_party',
+      partyName: 'Stock Party',
+      members: [hero],
+    );
+    final player = PlayerData(
+      playerId: 'player_stock',
+      playerName: 'Stock Player',
+      silver: 10000,
+      gold: 10,
+      currentTowerRunId: 1,
+      pendingMajorChainEventId: 'secret_bazaar',
+      pendingMajorChainEventIds: const ['secret_bazaar'],
+      savedParties: [party],
+      allHeroes: [hero],
+    );
+
+    final event = TowerRunService.maybeCreateMajorEvent(
+      playerData: player,
+      floor: 15,
+      party: party,
+    )!;
+    final buyOption = event.options.firstWhere(
+      (option) => option.id.startsWith('market_buy:'),
+    );
+    final itemId = buyOption.id.split(':')[1];
+    final stockKey = '1:secret_bazaar:$itemId';
+    final stock = player.eventStockFor(stockKey);
+
+    expect(stock, greaterThan(0));
+
+    for (var i = 0; i < stock; i++) {
+      final outcome = TowerRunService.applyDecision(
+        playerData: player,
+        party: party,
+        floor: 15,
+        event: event,
+        optionId: buyOption.id,
+      );
+      expect(outcome.silverDelta, lessThan(0));
+    }
+
+    expect(player.eventStockFor(stockKey), 0);
+
+    final soldOut = TowerRunService.applyDecision(
+      playerData: player,
+      party: party,
+      floor: 15,
+      event: event,
+      optionId: buyOption.id,
+    );
+
+    expect(soldOut.immediateItems, isEmpty);
+    expect(soldOut.logLines.single, contains('หมดสต็อก'));
+  });
+
+  test('Blacksmith upgrade and reroll should change equipped bonuses', () {
+    final hero = HeroModel(
+      id: 'hero_smith',
+      name: 'Smith Tester',
+      gender: 'เธเธฒเธข',
+      age: 26,
+      backgroundStory: 'Smith test hero',
+      baseStats: HeroStats.initial(),
+      currentStats: HeroStats.initial(),
+      aptitudes: const {'Knight': 1.0},
+    );
+    hero.equipItem(
+      ItemUsageService.definitionFor('steel_blade')!.toItemModel(),
+    );
+
+    final party = PartyModel(
+      partyId: 'smith_party',
+      partyName: 'Smith Party',
+      members: [hero],
+    );
+    final player = PlayerData(
+      playerId: 'player_smith',
+      playerName: 'Smith Player',
+      silver: 10000,
+      currentTowerRunId: 2,
+      pendingMajorChainEventId: 'living_forge',
+      pendingMajorChainEventIds: const ['living_forge'],
+      savedParties: [party],
+      allHeroes: [hero],
+    );
+
+    final forgeEvent = TowerRunService.maybeCreateMajorEvent(
+      playerData: player,
+      floor: 15,
+      party: party,
+    )!;
+    final upgradeOption = forgeEvent.options.firstWhere(
+      (option) => option.id.startsWith('smith_upgrade:${hero.id}:weapon:'),
+    );
+    final baseAtk = hero.equippedItemBonuses['weapon']!.atk;
+
+    final upgradeOutcome = TowerRunService.applyDecision(
+      playerData: player,
+      party: party,
+      floor: 15,
+      event: forgeEvent,
+      optionId: upgradeOption.id,
+    );
+
+    expect(upgradeOutcome.silverDelta, lessThan(0));
+    expect(hero.equipmentUpgradeLevelForSlot(EquipmentSlot.weapon), 1);
+    expect(hero.equippedItemBonuses['weapon']!.atk, greaterThan(baseAtk));
+
+    final upgradedBonus = hero.equippedItemBonuses['weapon']!.clone();
+    const smithEvent = TowerDecisionEvent(
+      id: 'living_forge',
+      title: 'Living Forge',
+      description: '',
+      options: [],
+    );
+    final rerollOutcome = TowerRunService.applyDecision(
+      playerData: player,
+      party: party,
+      floor: 15,
+      event: smithEvent,
+      optionId: 'smith_reroll:${hero.id}:weapon:250:0',
+    );
+    final rerolledBonus = hero.equippedItemBonuses['weapon']!;
+
+    expect(rerollOutcome.silverDelta, lessThan(0));
+    expect(player.eventRerollCountFor('2:living_forge:reroll'), 1);
+    expect(
+      rerolledBonus.atk != upgradedBonus.atk ||
+          rerolledBonus.spd != upgradedBonus.spd ||
+          rerolledBonus.luk != upgradedBonus.luk,
+      isTrue,
+    );
+  });
+
+  test('Elite floors should log monster passive and elite modifier', () {
+    final hero = HeroModel(
+      id: 'hero_elite',
+      name: 'Elite Tester',
+      gender: 'เธเธฒเธข',
+      age: 29,
+      backgroundStory: 'Elite floor tester',
+      level: 20,
+      baseStats: HeroStats(
+        maxHp: 900,
+        currentHp: 900,
+        atk: 180,
+        def: 140,
+        spd: 110,
+        maxEng: 180,
+        currentEng: 180,
+        luk: 60,
+      ),
+      currentStats: HeroStats(
+        maxHp: 900,
+        currentHp: 900,
+        atk: 180,
+        def: 140,
+        spd: 110,
+        maxEng: 180,
+        currentEng: 180,
+        luk: 60,
+      ),
+      aptitudes: const {'Knight': 1.0},
+      currentClass: 'warbringer',
+      unlockedClasses: const ['novice', 'vanguard', 'warbringer'],
+    );
+    final party = PartyModel(
+      partyId: 'elite_party',
+      partyName: 'Elite Party',
+      members: [hero],
+      formation: 'assault',
+    );
+    final player = PlayerData(
+      playerId: 'player_elite',
+      playerName: 'Elite Player',
+      currentTowerRunId: 4,
+      savedParties: [party],
+      allHeroes: [hero],
+    );
+
+    final outcome = TowerRunService.resolveFloor(
+      playerData: player,
+      party: party,
+      floor: 8,
+    );
+
+    expect(
+      outcome.logLines.any((line) => line.contains('คุณสมบัติประจำสาย')),
+      isTrue,
+    );
+    expect(
+      outcome.logLines.any((line) => line.contains('ตัวแปรชั้นพิเศษ')),
+      isTrue,
+    );
+  });
+
+  test('Tower resolve should produce per-hero live action reports', () {
+    final hero = HeroModel(
+      id: 'hero_live',
+      name: 'Live Tester',
+      gender: 'เธ',
+      age: 25,
+      backgroundStory: 'Live test',
+      level: 16,
+      baseStats: HeroStats(
+        maxHp: 500,
+        currentHp: 500,
+        atk: 95,
+        def: 72,
+        spd: 58,
+        maxEng: 110,
+        currentEng: 110,
+        luk: 24,
+      ),
+      currentStats: HeroStats(
+        maxHp: 500,
+        currentHp: 500,
+        atk: 95,
+        def: 72,
+        spd: 58,
+        maxEng: 110,
+        currentEng: 110,
+        luk: 24,
+      ),
+      aptitudes: const {'Knight': 1.0},
+      currentClass: 'vanguard',
+      unlockedClasses: const ['novice', 'vanguard'],
+    );
+    final party = PartyModel(
+      partyId: 'live_party',
+      partyName: 'Live Party',
+      members: [hero],
+    );
+    final player = PlayerData(
+      playerId: 'player_live',
+      playerName: 'Live Player',
+      inventory: [ItemUsageService.definitionFor('mana_potion')!.toItemModel()],
+      savedParties: [party],
+      allHeroes: [hero],
+    );
+
+    final outcome = TowerRunService.resolveFloor(
+      playerData: player,
+      party: party,
+      floor: 3,
+    );
+
+    expect(outcome.heroReports, hasLength(1));
+    expect(outcome.heroReports.first.action, isNotEmpty);
+    expect(outcome.heroReports.first.maxMana, greaterThan(0));
+  });
+
+  test('Tower entry should consume warp stone and silver fee', () {
+    final player = PlayerData(
+      playerId: 'player_warp',
+      playerName: 'Warp Player',
+      silver: 500,
+      inventory: [
+        ItemUsageService.definitionFor(
+          TowerRunService.towerWarpStoneItemId,
+        )!.toItemModel(),
+      ],
+    );
+
+    final fee = TowerRunService.entryFeeForFloor(4);
+    final consumed = TowerRunService.consumeTowerEntryCost(player, 4);
+
+    expect(consumed, isTrue);
+    expect(player.silver, 500 - fee);
+    expect(player.itemQuantity(TowerRunService.towerWarpStoneItemId), 0);
   });
 }

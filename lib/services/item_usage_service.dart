@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import '../models/hero_model.dart';
 import '../models/hero_stats.dart';
 import '../models/item_model.dart';
@@ -69,10 +71,7 @@ class ItemUseResult {
   final bool success;
   final String message;
 
-  const ItemUseResult({
-    required this.success,
-    required this.message,
-  });
+  const ItemUseResult({required this.success, required this.message});
 }
 
 class ItemSellResult {
@@ -93,10 +92,32 @@ class CraftingResult {
   final bool success;
   final String message;
 
-  const CraftingResult({
-    required this.success,
-    required this.message,
+  const CraftingResult({required this.success, required this.message});
+}
+
+class ItemPriceQuote {
+  final int silver;
+  final int gold;
+
+  const ItemPriceQuote({required this.silver, this.gold = 0});
+}
+
+class EventMarketOffer {
+  final String itemId;
+  final String title;
+  final String description;
+  final int silverCost;
+  final int goldCost;
+
+  const EventMarketOffer({
+    required this.itemId,
+    required this.title,
+    required this.description,
+    required this.silverCost,
+    this.goldCost = 0,
   });
+
+  String get optionId => 'market_buy:$itemId:$silverCost:$goldCost';
 }
 
 class ItemUsageService {
@@ -109,6 +130,47 @@ class ItemUsageService {
       sellSilverValue: 30,
       rarity: 1,
       type: ItemType.consumable,
+      buyable: true,
+    ),
+    const ItemCatalogEntry(
+      id: 'healing_potion',
+      name: 'Healing Potion',
+      description: 'ยาฟื้นเลือดฉุกเฉินสำหรับใช้ก่อนหรือระหว่างการลุยหอ',
+      silverCost: 120,
+      sellSilverValue: 45,
+      rarity: 1,
+      type: ItemType.consumable,
+      buyable: true,
+    ),
+    const ItemCatalogEntry(
+      id: 'mana_potion',
+      name: 'Mana Potion',
+      description: 'น้ำยาฟื้นมานาให้ฮีโร่ที่ใช้สกิลหนัก',
+      silverCost: 110,
+      sellSilverValue: 42,
+      rarity: 1,
+      type: ItemType.consumable,
+      buyable: true,
+    ),
+    const ItemCatalogEntry(
+      id: 'antidote_potion',
+      name: 'Antidote Potion',
+      description: 'ใช้ล้างพิษและฟื้นสภาพร่างกายหลังโดนพิษ',
+      silverCost: 100,
+      sellSilverValue: 40,
+      rarity: 1,
+      type: ItemType.consumable,
+      buyable: true,
+    ),
+    const ItemCatalogEntry(
+      id: 'tower_warp_stone',
+      name: 'Tower Warp Stone',
+      description: 'หินวาปสำหรับเข้าใช้งานหอคอยจากประตูหรือจุดพัก',
+      silverCost: 150,
+      sellSilverValue: 55,
+      rarity: 1,
+      type: ItemType.warpItem,
+      usableOnHero: false,
       buyable: true,
     ),
     const ItemCatalogEntry(
@@ -164,7 +226,8 @@ class ItemUsageService {
     ItemCatalogEntry(
       id: 'beast_meat',
       name: 'เนื้อสัตว์ดิบ',
-      description: 'ของกินดิบจากมอนสเตอร์ ใช้ย่างเป็นเสบียงหรือกินด่วนเพื่อฟื้นแรงเล็กน้อย',
+      description:
+          'ของกินดิบจากมอนสเตอร์ ใช้ย่างเป็นเสบียงหรือกินด่วนเพื่อฟื้นแรงเล็กน้อย',
       silverCost: 0,
       sellSilverValue: 14,
       rarity: 1,
@@ -392,7 +455,8 @@ class ItemUsageService {
     ItemCatalogEntry(
       id: 'forge_heart',
       name: 'หัวใจเตาหลอม',
-      description: 'รีลิกเฉพาะทางที่ปลุกเตาหลอมโบราณและเปิด chain สายช่างตีเหล็ก',
+      description:
+          'รีลิกเฉพาะทางที่ปลุกเตาหลอมโบราณและเปิด chain สายช่างตีเหล็ก',
       silverCost: 0,
       sellSilverValue: 240,
       sellGoldValue: 2,
@@ -490,12 +554,134 @@ class ItemUsageService {
     return null;
   }
 
+  static int buyPriceFor(
+    PlayerData playerData,
+    String itemId, {
+    String marketType = 'shop',
+  }) {
+    final definition = definitionFor(itemId);
+    if (definition == null) {
+      return 0;
+    }
+
+    final owned = playerData.itemQuantity(itemId);
+    final baseSilverCost = definition.silverCost > 0
+        ? definition.silverCost
+        : max(60, definition.sellSilverValue * 2);
+    final rarityPercent = 100 + ((definition.rarity - 1) * 12);
+    final scarcityPercent = _scarcityPercent(owned);
+    final marketPercent = _buyMarketPercent(marketType, definition);
+
+    final price =
+        (baseSilverCost * rarityPercent * scarcityPercent * marketPercent) ~/
+        1000000;
+    return price.clamp(
+      max(1, baseSilverCost ~/ 2),
+      max(baseSilverCost * 3, baseSilverCost + 40),
+    );
+  }
+
+  static ItemPriceQuote sellQuoteFor(
+    PlayerData playerData,
+    String itemId, {
+    int quantity = 1,
+    String marketType = 'shop',
+  }) {
+    final definition = definitionFor(itemId);
+    final owned = playerData.itemQuantity(itemId);
+    final baseSilver = definition?.sellSilverValue ?? 10;
+    final baseGold = definition?.sellGoldValue ?? 0;
+    final rarityPercent = 100 + (((definition?.rarity ?? 1) - 1) * 10);
+    final scarcityPercent = _scarcityPercent(owned);
+    final marketPercent = _sellMarketPercent(marketType, definition);
+
+    final silver =
+        ((baseSilver * quantity) *
+            rarityPercent *
+            scarcityPercent *
+            marketPercent) ~/
+        1000000;
+    final gold = max(0, (baseGold * quantity * marketPercent) ~/ 100);
+    return ItemPriceQuote(
+      silver: silver.clamp(
+        max(1, baseSilver ~/ 2),
+        max(baseSilver * quantity * 3, 1),
+      ),
+      gold: gold,
+    );
+  }
+
+  static List<EventMarketOffer> merchantOffersFor(
+    PlayerData playerData,
+    int floor, {
+    bool premium = false,
+  }) {
+    final candidateIds = premium
+        ? <String>[
+            'saints_emblem',
+            'class_trial_seal',
+            'survivor_cache',
+            'tower_ore_4',
+            'sanctum_lantern',
+          ]
+        : <String>[
+            'ration_pack',
+            'battle_tonic',
+            'guard_tonic',
+            'swift_tonic',
+            'trust_token',
+            'prayer_candle',
+            'survivor_cache',
+            'tower_ore_3',
+          ];
+
+    return _buildEventOffers(
+      playerData,
+      candidateIds,
+      floor: floor,
+      marketType: premium ? 'vault_market' : 'merchant',
+      count: premium ? 3 : 2,
+    );
+  }
+
+  static List<EventMarketOffer> blacksmithOffersFor(
+    PlayerData playerData,
+    int floor, {
+    bool premium = false,
+  }) {
+    final candidateIds = premium
+        ? <String>[
+            'forge_heart',
+            'tower_mail',
+            'steel_blade',
+            'ranger_bow',
+            'tower_ore_4',
+          ]
+        : <String>[
+            'steel_blade',
+            'ranger_bow',
+            'tower_mail',
+            'tower_ore_2',
+            'tower_ore_3',
+          ];
+
+    return _buildEventOffers(
+      playerData,
+      candidateIds,
+      floor: floor,
+      marketType: premium ? 'ember_forge' : 'blacksmith',
+      count: premium ? 3 : 2,
+    );
+  }
+
   static String categoryLabel(ItemModel item) {
     switch (item.type) {
       case ItemType.weapon:
         return 'อาวุธ';
       case ItemType.armor:
-        return item.equipmentSlot == EquipmentSlot.relic ? 'เครื่องราง' : 'ชุดเกราะ';
+        return item.equipmentSlot == EquipmentSlot.relic
+            ? 'เครื่องราง'
+            : 'ชุดเกราะ';
       case ItemType.consumable:
         return 'ของใช้/ของกิน';
       case ItemType.material:
@@ -507,13 +693,14 @@ class ItemUsageService {
 
   static bool buyItem(PlayerData playerData, String itemId) {
     final definition = definitionFor(itemId);
+    final price = buyPriceFor(playerData, itemId);
     if (definition == null ||
         !definition.buyable ||
-        playerData.silver < definition.silverCost) {
+        playerData.silver < price) {
       return false;
     }
 
-    playerData.silver -= definition.silverCost;
+    playerData.silver -= price;
     playerData.addItemRewards([definition.toItemModel()]);
     return true;
   }
@@ -532,6 +719,13 @@ class ItemUsageService {
       );
     }
 
+    final quote = sellQuoteFor(
+      playerData,
+      itemId,
+      quantity: quantity,
+      marketType: 'shop',
+    );
+
     if (!playerData.consumeItem(itemId, quantity: quantity)) {
       return const ItemSellResult(
         success: false,
@@ -540,8 +734,8 @@ class ItemUsageService {
     }
 
     final item = definition;
-    final silver = (item?.sellSilverValue ?? 10) * quantity;
-    final gold = (item?.sellGoldValue ?? 0) * quantity;
+    final silver = quote.silver;
+    final gold = quote.gold;
     playerData.silver += silver;
     playerData.gold += gold;
     final name = item?.name ?? itemId;
@@ -554,6 +748,113 @@ class ItemUsageService {
       silverEarned: silver,
       goldEarned: gold,
     );
+  }
+
+  static int _scarcityPercent(int quantity) {
+    if (quantity <= 0) {
+      return 118;
+    }
+    if (quantity == 1) {
+      return 112;
+    }
+    if (quantity <= 3) {
+      return 105;
+    }
+    if (quantity >= 8) {
+      return 90;
+    }
+    if (quantity >= 5) {
+      return 95;
+    }
+    return 100;
+  }
+
+  static int _buyMarketPercent(String marketType, ItemCatalogEntry definition) {
+    switch (marketType) {
+      case 'merchant':
+        return definition.type == ItemType.consumable ? 92 : 96;
+      case 'vault_market':
+        return definition.rarity >= 4 ? 104 : 94;
+      case 'blacksmith':
+        return definition.type == ItemType.weapon ||
+                definition.type == ItemType.armor
+            ? 88
+            : 95;
+      case 'ember_forge':
+        return definition.type == ItemType.weapon ||
+                definition.type == ItemType.armor
+            ? 82
+            : 90;
+      default:
+        return 100;
+    }
+  }
+
+  static int _sellMarketPercent(
+    String marketType,
+    ItemCatalogEntry? definition,
+  ) {
+    switch (marketType) {
+      case 'merchant':
+        return definition?.type == ItemType.material ? 108 : 102;
+      case 'vault_market':
+        return (definition?.rarity ?? 1) >= 4 ? 112 : 105;
+      case 'blacksmith':
+        return definition?.type == ItemType.weapon ||
+                definition?.type == ItemType.armor
+            ? 110
+            : 98;
+      case 'ember_forge':
+        return definition?.type == ItemType.weapon ||
+                definition?.type == ItemType.armor
+            ? 116
+            : 102;
+      default:
+        return 100;
+    }
+  }
+
+  static List<EventMarketOffer> _buildEventOffers(
+    PlayerData playerData,
+    List<String> candidateIds, {
+    required int floor,
+    required String marketType,
+    required int count,
+  }) {
+    final offers = <EventMarketOffer>[];
+    final offset = floor % candidateIds.length;
+    final rotated = [
+      ...candidateIds.skip(offset),
+      ...candidateIds.take(offset),
+    ];
+
+    for (final itemId in rotated) {
+      if (offers.length >= count) {
+        break;
+      }
+      final definition = definitionFor(itemId);
+      if (definition == null) {
+        continue;
+      }
+      final price = buyPriceFor(playerData, itemId, marketType: marketType);
+      final goldCost =
+          (marketType == 'vault_market' || marketType == 'ember_forge') &&
+              definition.rarity >= 4
+          ? max(1, definition.sellGoldValue)
+          : 0;
+      offers.add(
+        EventMarketOffer(
+          itemId: itemId,
+          title: definition.name,
+          description:
+              '${definition.description}\nราคาเฉพาะเหตุการณ์ $price Silver',
+          silverCost: price,
+          goldCost: goldCost,
+        ),
+      );
+    }
+
+    return offers;
   }
 
   static bool canCraft(PlayerData playerData, CraftingRecipe recipe) {
@@ -599,7 +900,10 @@ class ItemUsageService {
   ) {
     final definition = definitionFor(itemId);
     if (definition == null || !definition.isEquippable) {
-      return const ItemUseResult(success: false, message: 'ไอเทมนี้สวมใส่ไม่ได้');
+      return const ItemUseResult(
+        success: false,
+        message: 'ไอเทมนี้สวมใส่ไม่ได้',
+      );
     }
     if (!playerData.consumeItem(itemId)) {
       return ItemUseResult(
@@ -632,7 +936,10 @@ class ItemUsageService {
   ) {
     final itemId = hero.equippedItemIdForSlot(slot);
     if (itemId == null) {
-      return const ItemUseResult(success: false, message: 'ช่องนี้ยังไม่มีอุปกรณ์');
+      return const ItemUseResult(
+        success: false,
+        message: 'ช่องนี้ยังไม่มีอุปกรณ์',
+      );
     }
 
     final definition = definitionFor(itemId);
@@ -669,20 +976,60 @@ class ItemUsageService {
 
     switch (itemId) {
       case 'ration_pack':
-        hero.currentStats.currentHp =
-            (hero.currentStats.currentHp + 30).clamp(0, hero.currentStats.maxHp);
-        hero.currentStats.currentEng =
-            (hero.currentStats.currentEng + 40).clamp(0, hero.currentStats.maxEng);
+        hero.currentStats.currentHp = (hero.currentStats.currentHp + 30).clamp(
+          0,
+          hero.currentStats.maxHp,
+        );
+        hero.currentStats.currentEng = (hero.currentStats.currentEng + 40)
+            .clamp(0, hero.currentStats.maxEng);
+        hero.restoreMana(10);
         hero.reduceRecoveryCooldown(const Duration(minutes: 20));
+        hero.refreshBodyCondition();
         return const ItemUseResult(
           success: true,
           message: 'ใช้เสบียงสนามแล้ว ฟื้น HP/ENG และเร่งพักฟื้น',
         );
+      case 'healing_potion':
+        hero.currentStats.currentHp = (hero.currentStats.currentHp + 75).clamp(
+          0,
+          hero.currentStats.maxHp,
+        );
+        hero.removeStatusEffect('wounded');
+        hero.refreshBodyCondition();
+        return const ItemUseResult(
+          success: true,
+          message: 'ใช้ Healing Potion แล้ว ฟื้น HP จำนวนมาก',
+        );
+      case 'mana_potion':
+        hero.restoreMana(55);
+        hero.currentStats.currentEng = (hero.currentStats.currentEng + 15)
+            .clamp(0, hero.currentStats.maxEng);
+        hero.removeStatusEffect('exhausted');
+        hero.refreshBodyCondition();
+        return const ItemUseResult(
+          success: true,
+          message: 'ใช้ Mana Potion แล้ว ฟื้นมานาและกำลังเล็กน้อย',
+        );
+      case 'antidote_potion':
+        hero.removeStatusEffect('poisoned');
+        hero.currentStats.currentHp = (hero.currentStats.currentHp + 18).clamp(
+          0,
+          hero.currentStats.maxHp,
+        );
+        hero.refreshBodyCondition();
+        return const ItemUseResult(
+          success: true,
+          message: 'ใช้ Antidote Potion แล้ว ล้างพิษสำเร็จ',
+        );
       case 'beast_meat':
-        hero.currentStats.currentHp =
-            (hero.currentStats.currentHp + 12).clamp(0, hero.currentStats.maxHp);
-        hero.currentStats.currentEng =
-            (hero.currentStats.currentEng + 15).clamp(0, hero.currentStats.maxEng);
+        hero.currentStats.currentHp = (hero.currentStats.currentHp + 12).clamp(
+          0,
+          hero.currentStats.maxHp,
+        );
+        hero.currentStats.currentEng = (hero.currentStats.currentEng + 15)
+            .clamp(0, hero.currentStats.maxEng);
+        hero.restoreMana(4);
+        hero.refreshBodyCondition();
         return const ItemUseResult(
           success: true,
           message: 'กินเนื้อสัตว์ดิบ ฟื้นแรงเล็กน้อย',
@@ -730,7 +1077,10 @@ class ItemUsageService {
           message: 'เปิดหีบเสบียง ได้เสบียงสนามและเครื่องรางใจ',
         );
       default:
-        return const ItemUseResult(success: false, message: 'ไอเทมนี้ยังใช้ตรง ๆ ไม่ได้');
+        return const ItemUseResult(
+          success: false,
+          message: 'ไอเทมนี้ยังใช้ตรง ๆ ไม่ได้',
+        );
     }
   }
 }

@@ -1,7 +1,7 @@
 # Handoff Status
 
-Last updated: March 12, 2026
-Project state: Playable Flutter prototype with persistence, realtime tower loop, recovery cooldown, and class progression
+Last updated: March 14, 2026
+Project state: Playable Flutter prototype with save/load, realtime tower expedition, hero progression, class branches, skill display, event chains, economy, and optional Ollama-backed advice
 
 ## 1. Current app flow
 
@@ -9,11 +9,12 @@ Entry point:
 - `lib/main.dart` opens `MainDashboard`
 
 Main screens:
-- `Status`: overview of player resources, roster state, recovery state, inventory snapshot
-- `Hero Inventory`: list of all owned heroes, tap to open hero detail
-- `Gacha`: summon heroes and send them into the roster immediately
-- `Tower`: realtime expedition loop with major decisions, rewards, cooldown, and quick recovery
-- `Shop`: existing prototype shop screen
+- `Status`: player overview, resources, AI mode summary, roster snapshot, quick links
+- `Hero Inventory`: roster list and access to hero detail
+- `Gacha`: summon heroes into the roster immediately
+- `Tower`: realtime expedition loop with entry-floor selection, warp-stone entry cost, major decisions, live hero status, rewards, and recovery cooldown
+- `Shop`: buy/sell/craft economy screen with consumables, utility items, warp stones, equipment, and separated sell sections
+- `AI Settings`: switch between rule-based advice and local Ollama, test connection, persist settings
 
 Persistent data:
 - Stored with `shared_preferences`
@@ -21,20 +22,24 @@ Persistent data:
 
 ## 2. Systems currently implemented
 
-### Hero and progression
-- `HeroModel` now stores:
+### Hero model and progression
+- `HeroModel` stores:
   - level
   - current EXP
   - total EXP earned
+  - total tower floors cleared
+  - total items used
   - bond
   - faith
   - current class
   - unlocked classes
+  - mana
+  - body condition
+  - status effects
+  - skill cooldown state
+  - current action / current target
   - recovery cooldown timestamp
-- EXP is granted during tower runs and visible in:
-  - tower log
-  - hero detail
-  - inventory card
+- EXP is awarded during tower runs and shown in hero detail, tower logs, and status summaries
 - Experience stage labels exist:
   - `Recruit`
   - `Seasoned`
@@ -46,35 +51,59 @@ Main files:
 - `lib/models/hero_model.dart`
 - `lib/utils/leveling_policy.dart`
 
-### Class progression
-- Class logic service: `lib/services/class_progression_service.dart`
-- Current supported classes:
-  - `novice`
-  - `vanguard`
-  - `skirmisher`
-  - `acolyte`
-  - `knight`
-  - `ranger`
-  - `warden`
-  - `oracle`
-- Class unlock rules use character stats, level, bond, faith, and aptitude
-- Special override path exists via item:
-  - `Class Trial Seal`
-- Class change is available in hero detail screen
+### Skills
+- Hero detail shows unlocked skills and upcoming unlocks
+- Skills are learned from class + level progression
+- Runtime state tracks:
+  - mana cost
+  - cooldowns
+  - last used skill
+  - per-floor action summary
+- Tower UI shows hero-by-hero status including HP, ENG, MP, body condition, statuses, target, skill use, and cooldowns
+
+Main files:
+- `lib/models/skill_model.dart`
+- `lib/services/skill_progression_service.dart`
+- `lib/screens/hero_detail_screen.dart`
+- `lib/screens/tower_screen.dart`
+
+### Class progression and class quests
+- Class progression service supports branch unlock rules
+- Current branch structure:
+  - `Novice -> Vanguard -> Knight / Warbringer`
+  - `Novice -> Skirmisher -> Ranger / Shadowblade`
+  - `Novice -> Acolyte -> Oracle / Saint`
+- Unlock rules use stats, level, bond, faith, and quest completion
+- `Class Trial Seal` still exists as special override support
+- Class quest board screen exists and supports branch filtering
+
+Main files:
+- `lib/services/class_progression_service.dart`
+- `lib/services/class_quest_service.dart`
+- `lib/screens/class_quest_board_screen.dart`
 
 ### Tower loop
 - Realtime floor processing with timer
-- Major decision events only trigger on milestone floors
+- Player can choose entry floor from already-cleared floors plus the next new floor
+- Entering the tower requires:
+  - `Tower Warp Stone` x1
+  - silver entry fee based on floor
+- Warp-out is effectively free because entry cost is paid at run start
+- Major decisions trigger on milestone floors instead of constantly
+- Event chains can branch across multiple stages
 - Advice charges scale from party bond/faith
 - Tower gives:
   - silver
   - gold
   - EXP
   - items
-- Tower can also drop:
-  - `Field Ration`
-  - `Class Trial Seal`
-  - ore and relic materials
+- Tower battles use simulation, but now include:
+  - monster family profiles
+  - elite modifiers
+  - equipment impact
+  - class impact
+  - autonomous hero action resolution
+  - automatic potion usage for some situations
 
 Main files:
 - `lib/screens/tower_screen.dart`
@@ -83,24 +112,75 @@ Main files:
 
 ### Recovery system
 - After expedition, party enters cooldown-based recovery
-- Recovery duration depends on fatigue and cleared floors
+- Recovery duration depends on expedition strain and hero state
 - Fast recovery paths:
   - spend silver
   - consume `Field Ration`
-- Recovery status updates in UI without requiring a manual refresh
+- Recovery status updates live in the UI without manual refresh
+
+### Economy and items
+- Buy/sell/craft flow exists
+- Shop now sells:
+  - consumables
+  - utility / prep items
+  - `Tower Warp Stone`
+  - equipment
+- Shop buyback is separated by:
+  - materials
+  - consumables
+  - utility / warp items
+  - equipment
+- Dynamic pricing exists based on scarcity, rarity, and market type
+- Event merchant / blacksmith inventories can differ from the base shop
+- Item use includes:
+  - healing potion
+  - mana potion
+  - antidote potion
+  - field ration
+  - tonics
+  - trust / faith items
+
+Main files:
+- `lib/services/item_usage_service.dart`
+- `lib/screens/shop_screen.dart`
 
 ### Save system
-- Save/load already supports:
+- Save/load supports:
   - heroes
   - parties
   - inventory
   - tower progress
+  - recovery state
   - class state
-  - recovery cooldown state
+  - event-chain state
+  - event market stock
+  - AI settings
 
 Main files:
 - `lib/models/player_data.dart`
 - `lib/services/player_storage_service.dart`
+
+### Agent AI / Ollama integration
+- AI settings are configurable in-app
+- Two modes:
+  - `Rule-based`
+  - `Ollama`
+- Settings stored in save data:
+  - provider
+  - base URL
+  - model
+  - timeout
+  - temperature
+  - fallback behavior
+- Current integration scope:
+  - used for tower decision advice when player presses `ขอคำแนะนำ`
+  - falls back to rule-based advice if Ollama is disabled or unavailable and fallback is enabled
+- Connection test is available in UI
+
+Main files:
+- `lib/models/agent_ai_settings.dart`
+- `lib/services/agent_ai_service.dart`
+- `lib/screens/ai_settings_screen.dart`
 
 ## 3. Important files
 
@@ -110,11 +190,17 @@ Core models:
 - `lib/models/player_data.dart`
 - `lib/models/party_model.dart`
 - `lib/models/item_model.dart`
+- `lib/models/skill_model.dart`
+- `lib/models/agent_ai_settings.dart`
 
 Core services:
 - `lib/services/player_storage_service.dart`
 - `lib/services/tower_run_service.dart`
 - `lib/services/class_progression_service.dart`
+- `lib/services/class_quest_service.dart`
+- `lib/services/skill_progression_service.dart`
+- `lib/services/item_usage_service.dart`
+- `lib/services/agent_ai_service.dart`
 
 Screens:
 - `lib/screens/main_dashboard.dart`
@@ -122,6 +208,8 @@ Screens:
 - `lib/screens/hero_detail_screen.dart`
 - `lib/screens/tower_screen.dart`
 - `lib/screens/shop_screen.dart`
+- `lib/screens/class_quest_board_screen.dart`
+- `lib/screens/ai_settings_screen.dart`
 - `lib/screens/debug_hero_screen.dart`
 
 Legacy/time prototype:
@@ -129,7 +217,7 @@ Legacy/time prototype:
 
 ## 4. Verified status
 
-Verified on March 12, 2026:
+Verified on March 14, 2026:
 - `flutter analyze` passed
 - `flutter test` passed
 
@@ -138,59 +226,70 @@ Relevant tests:
 - `test/class_progression_service_test.dart`
 - `test/player_data_test.dart`
 - `test/tower_run_service_test.dart`
+- `test/agent_ai_service_test.dart`
 - `test/widget_test.dart`
 
-## 5. Known limitations
+## 5. What was completed in the latest round
+
+- Added utility shop support so `Tower Warp Stone` is actually purchasable
+- Added starter inventory for new save data with initial warp stones and rations
+- Added persisted AI settings to player save data
+- Added `AI Settings` screen for choosing rule-based vs Ollama
+- Added Ollama connection test flow
+- Wired tower advice request button to use `AgentAiService`
+- Preserved safe fallback to existing rule-based advice
+- Updated tests for AI settings serialization and fallback behavior
+
+## 6. Known limitations
 
 These are not broken, but still prototype-grade:
 
-1. Class change has stat requirements and seal override, but there is not yet a true quest chain or mission screen behind it.
-2. Inventory items are still mostly used for recovery/material progression; equip/use-item systems are not fully built.
-3. Tower battles are still resolved as simulation, not turn-by-turn combat.
-4. Event consequence chains across multiple future runs are still shallow.
-5. `GameEngine` time system exists but is not yet fully integrated into all base-management systems.
+1. Ollama is only used for tower advice text right now, not for full autonomous combat behavior.
+2. Tower battle resolution is still simulation-based, not full turn-by-turn combat with actual skill timelines.
+3. Safe points, prep purchasing inside the tower, and warp routing are still simplified.
+4. Item crafting and equipment depth are useful but not yet full RPG-grade loadout systems.
+5. Base management and in-game time systems are still not fully integrated with the tower/economy loop.
 6. `README.md` is still the default Flutter template and does not describe the project yet.
 
-## 6. Best next steps
+## 7. Best next steps
 
 Recommended order for the next sprint:
 
-1. Build real class quests
-- Add quest definitions and quest progress data
-- Require quest completion for advanced/special classes instead of item override alone
-- Surface quest progress in hero detail and dashboard
+1. Expand AI beyond advice
+- Let Ollama generate party chatter, character intent, and event reactions
+- Optionally let Ollama propose pre-run preparation plans
+- Keep hard gameplay validation server-side/in-code to avoid unstable outputs affecting save data
 
-2. Expand inventory into real gameplay
-- Consumables with direct use on heroes
-- Equipment slots and stat application
-- Better loot categories from tower and shop
+2. Deepen tower prep and route logic
+- Add safe points and internal floor warp routing
+- Lock buying to safe points / merchants only
+- Let player choose return-to-cleared-floor flow more explicitly
 
-3. Improve tower consequence depth
-- Event chains that unlock later branches
-- Character-specific reactions
-- Longer-term trust/faith effects from major decisions
+3. Improve combat readability
+- Show per-hero skill timeline, cooldown countdown, and item triggers more clearly
+- Add stronger mapping between monster family and counter-skills
+- Move closer to turn-by-turn or tick-by-tick resolution if needed
 
-4. Connect base management to time
-- Let in-game time affect recovery, training, and resource generation
-- Use `GameEngine` as shared progression clock if the prototype keeps that direction
+4. Improve equipment and crafting
+- Add upgrade tiers, gear progression identity, and stronger set/relic effects
+- Make crafting outputs more meaningful for class branches
 
-## 7. Git upload checklist
+## 8. Git upload checklist
 
 Before pushing:
 - confirm `flutter analyze`
 - confirm `flutter test`
-- review `README.md` if you want a cleaner public-facing repository page
-- commit `HANDOFF_STATUS.md` with the code changes from this round
+- commit `HANDOFF_STATUS.md` together with code changes
+- optionally update `README.md` so the repository is understandable from Git alone
 
-Suggested commit scope for this round:
-- recovery cooldown
-- quick recovery by item/silver
-- EXP visibility improvements
-- class progression system
+Suggested commit scope for the latest round:
+- warp stone shop availability
+- AI settings persistence
+- Ollama integration for advice
 - updated handoff document
 
-## 8. If continuing in another session
+## 9. If continuing in another session
 
 Good prompt to resume:
 
-`Read HANDOFF_STATUS.md first, then continue the next sprint by implementing real class quests and deeper item usage without breaking current save data.`
+`Read HANDOFF_STATUS.md first, then continue by expanding Ollama from advice-only into richer character behavior while keeping rule-based fallback and save compatibility intact.`

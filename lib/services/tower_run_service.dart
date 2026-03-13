@@ -1,10 +1,12 @@
 import 'dart:math';
 
 import '../models/hero_model.dart';
+import '../models/hero_stats.dart';
 import '../models/item_model.dart';
 import '../models/party_model.dart';
 import '../models/player_data.dart';
 import 'item_usage_service.dart';
+import 'skill_progression_service.dart';
 
 class TowerRunResult {
   final int startFloor;
@@ -45,6 +47,7 @@ class TowerFloorOutcome {
   final int expPerHero;
   final List<ItemModel> itemRewards;
   final Map<String, int> levelsGained;
+  final List<TowerHeroActionReport> heroReports;
   final List<String> logLines;
 
   const TowerFloorOutcome({
@@ -58,7 +61,44 @@ class TowerFloorOutcome {
     required this.expPerHero,
     required this.itemRewards,
     required this.levelsGained,
+    required this.heroReports,
     required this.logLines,
+  });
+}
+
+class TowerHeroActionReport {
+  final String heroId;
+  final String heroName;
+  final String action;
+  final String? target;
+  final String? skillName;
+  final String? itemUsed;
+  final int remainingHp;
+  final int maxHp;
+  final int remainingEng;
+  final int maxEng;
+  final int remainingMana;
+  final int maxMana;
+  final String bodyCondition;
+  final List<String> statusEffects;
+  final Map<String, int> cooldowns;
+
+  const TowerHeroActionReport({
+    required this.heroId,
+    required this.heroName,
+    required this.action,
+    required this.target,
+    required this.skillName,
+    required this.itemUsed,
+    required this.remainingHp,
+    required this.maxHp,
+    required this.remainingEng,
+    required this.maxEng,
+    required this.remainingMana,
+    required this.maxMana,
+    required this.bodyCondition,
+    required this.statusEffects,
+    required this.cooldowns,
   });
 }
 
@@ -106,19 +146,88 @@ class TowerDecisionOutcome {
   });
 }
 
+class MonsterProfile {
+  final String id;
+  final String name;
+  final String description;
+  final int powerBias;
+  final int pressureBias;
+  final int rewardBias;
+  final int supportBias;
+  final String lootTheme;
+
+  const MonsterProfile({
+    required this.id,
+    required this.name,
+    required this.description,
+    required this.powerBias,
+    required this.pressureBias,
+    required this.rewardBias,
+    required this.supportBias,
+    required this.lootTheme,
+  });
+}
+
+class EliteModifierProfile {
+  final String id;
+  final String name;
+  final String description;
+  final int enemyPowerDelta;
+  final int pressureDelta;
+  final int rewardDelta;
+  final int lootRarityBonus;
+
+  const EliteModifierProfile({
+    required this.id,
+    required this.name,
+    required this.description,
+    required this.enemyPowerDelta,
+    required this.pressureDelta,
+    required this.rewardDelta,
+    required this.lootRarityBonus,
+  });
+
+  bool get isElite => id != 'normal';
+}
+
+class BlacksmithTarget {
+  final HeroModel hero;
+  final EquipmentSlot slot;
+  final String itemId;
+
+  const BlacksmithTarget({
+    required this.hero,
+    required this.slot,
+    required this.itemId,
+  });
+}
+
+class TowerHeroActionEffect {
+  final TowerHeroActionReport report;
+  final int partyPowerDelta;
+  final int enemyPowerDelta;
+  final int rewardDelta;
+  final String logLine;
+
+  const TowerHeroActionEffect({
+    required this.report,
+    required this.partyPowerDelta,
+    required this.enemyPowerDelta,
+    required this.rewardDelta,
+    required this.logLine,
+  });
+}
+
 class TowerRunService {
   static final Random _random = Random();
   static const String recoveryItemId = 'ration_pack';
+  static const String towerWarpStoneItemId = 'tower_warp_stone';
   static const List<String> _majorEventOrder = [
     'shrine',
     'oath_gate',
     'survivor',
   ];
-  static const Set<String> _holyClasses = {
-    'acolyte',
-    'oracle',
-    'saint',
-  };
+  static const Set<String> _holyClasses = {'acolyte', 'oracle', 'saint'};
   static const Set<String> _frontlineClasses = {
     'vanguard',
     'knight',
@@ -129,11 +238,7 @@ class TowerRunService {
     'ranger',
     'shadowblade',
   };
-  static const Set<String> _guardianClasses = {
-    'knight',
-    'saint',
-    'acolyte',
-  };
+  static const Set<String> _guardianClasses = {'knight', 'saint', 'acolyte'};
 
   static TowerRunResult run({
     required PlayerData playerData,
@@ -228,12 +333,29 @@ class TowerRunService {
         expPerHero: 0,
         itemRewards: [],
         levelsGained: {},
+        heroReports: [],
         logLines: ['ไม่มีสมาชิกในปาร์ตี้ที่พร้อมต่อสู้'],
       );
     }
 
+    final monsterProfile = _monsterForFloor(floor);
+    final familyPowerDelta = _monsterFamilyPowerDelta(monsterProfile);
+    final familyPressureDelta = _monsterFamilyPressureDelta(monsterProfile);
+    final familyRewardDelta = _monsterFamilyRewardDelta(monsterProfile);
+    final eliteModifier = _eliteModifierForFloor(
+      floor,
+      playerData.currentTowerRunId,
+      monsterProfile,
+    );
     final baseEnemyPower = 280 + (floor * 180);
-    var enemyPower = max(100, baseEnemyPower + enemyModifier);
+    var enemyPower = max(
+      100,
+      baseEnemyPower +
+          enemyModifier +
+          monsterProfile.powerBias +
+          familyPowerDelta +
+          eliteModifier.enemyPowerDelta,
+    );
     final supportPower = aliveMembers.fold<int>(
       0,
       (sum, hero) => sum + hero.currentStats.spd + hero.currentStats.luk,
@@ -245,6 +367,7 @@ class TowerRunService {
     final randomSwing = _random.nextInt(171) - 85;
     final formationBonus = _formationBonus(party);
     final classSynergyBonus = _classSynergyBonus(party);
+    final monsterMatchupBonus = _monsterMatchupBonus(party, monsterProfile);
     final equipmentPowerBonus = aliveMembers.fold<int>(
       0,
       (sum, hero) => sum + _heroEquipmentBattlePower(hero),
@@ -257,32 +380,90 @@ class TowerRunService {
       0,
       (sum, hero) => sum + _heroEquipmentRewardBonus(hero),
     );
+    final heroActionEffects = aliveMembers
+        .map(
+          (hero) => _prepareHeroAction(
+            playerData: playerData,
+            hero: hero,
+            floor: floor,
+            monster: monsterProfile,
+          ),
+        )
+        .toList();
+    final skillPowerBonus = heroActionEffects.fold<int>(
+      0,
+      (sum, effect) => sum + effect.partyPowerDelta,
+    );
+    final skillShieldBonus = heroActionEffects.fold<int>(
+      0,
+      (sum, effect) => sum + effect.enemyPowerDelta,
+    );
+    final skillRewardBonus = heroActionEffects.fold<int>(
+      0,
+      (sum, effect) => sum + effect.rewardDelta,
+    );
     enemyPower = max(100, enemyPower - equipmentShieldBonus);
-    final partyPower = party.partyPower +
-        supportPower +
+    enemyPower = max(100, enemyPower - skillShieldBonus);
+    final partyPower =
+        party.partyPower +
+        max<int>(0, supportPower + monsterProfile.supportBias) +
         formationBonus +
         classSynergyBonus +
+        monsterMatchupBonus +
+        skillPowerBonus +
         equipmentPowerBonus +
         randomSwing;
     final succeeded = partyPower >= enemyPower;
     final reachedNewBest = succeeded && floor > playerData.highestTowerFloor;
 
     final silverReward = succeeded
-        ? max(50, 120 + (floor * 45) + rewardModifier + equipmentRewardBonus)
+        ? max(
+            50,
+            120 +
+                (floor * 45) +
+                rewardModifier +
+                equipmentRewardBonus +
+                skillRewardBonus +
+                monsterProfile.rewardBias +
+                familyRewardDelta +
+                eliteModifier.rewardDelta,
+          )
         : 0;
     final goldReward = succeeded && floor % 5 == 0
-        ? 10 + (equipmentRewardBonus >= 24 ? 1 : 0)
+        ? 10 +
+              (equipmentRewardBonus >= 24 ? 1 : 0) +
+              (skillRewardBonus >= 18 ? 1 : 0) +
+              (monsterProfile.rewardBias >= 20 ? 1 : 0) +
+              (familyRewardDelta >= 16 ? 1 : 0) +
+              (eliteModifier.isElite ? 1 : 0)
         : 0;
     final expPerHero = succeeded
         ? max(
             20,
-            30 + (floor * 12) + (rewardModifier ~/ 2) + (equipmentRewardBonus ~/ 4),
+            30 +
+                (floor * 12) +
+                (rewardModifier ~/ 2) +
+                (equipmentRewardBonus ~/ 4) +
+                (skillRewardBonus ~/ 4) +
+                (monsterProfile.rewardBias ~/ 2) +
+                (familyRewardDelta ~/ 2) +
+                (eliteModifier.rewardDelta ~/ 2),
           )
         : 10;
-    final itemRewards =
-        succeeded ? _generateLootRewards(floor, rewardModifier) : <ItemModel>[];
+    final itemRewards = succeeded
+        ? _generateLootRewards(
+            floor,
+            rewardModifier + familyRewardDelta + eliteModifier.rewardDelta,
+            monsterProfile,
+            eliteModifier: eliteModifier,
+          )
+        : <ItemModel>[];
     final levelsGained = <String, int>{};
     final logLines = <String>[
+      'คุณสมบัติประจำสาย: ${_monsterFamilyPassiveLabel(monsterProfile)}',
+      if (eliteModifier.isElite)
+        'ตัวแปรชั้นพิเศษ: ${eliteModifier.name} (${eliteModifier.description})',
+      'ศัตรูประจำชั้น: ${monsterProfile.name} (${monsterProfile.description})',
       succeeded
           ? 'ชนะชั้น $floor ด้วยพลัง $partyPower ต่อ $enemyPower (${party.formationLabel})'
           : 'พ่ายแพ้ที่ชั้น $floor ด้วยพลัง $partyPower ต่อ $enemyPower (${party.formationLabel})',
@@ -300,6 +481,22 @@ class TowerRunService {
     if (equipmentRewardBonus > 0 && succeeded) {
       logLines.add('อุปกรณ์ช่วยเพิ่มคุณภาพการเก็บของ +$equipmentRewardBonus');
     }
+    if (skillPowerBonus > 0) {
+      logLines.add('การใช้สกิลของทีมเพิ่มจังหวะต่อสู้ +$skillPowerBonus');
+    }
+    if (skillShieldBonus > 0) {
+      logLines.add('สกิลเชิงรับกดแรงศัตรูลง $skillShieldBonus');
+    }
+    if (skillRewardBonus > 0 && succeeded) {
+      logLines.add('สกิลสายสนับสนุนช่วยเพิ่มผลตอบแทน +$skillRewardBonus');
+    }
+    if (monsterMatchupBonus != 0) {
+      logLines.add(
+        'ทีมอ่านทาง ${monsterProfile.name} ได้ดีขึ้น +$monsterMatchupBonus',
+      );
+    }
+
+    logLines.addAll(heroActionEffects.map((effect) => effect.logLine));
 
     for (final hero in aliveMembers) {
       final combatShare = totalHeroPower <= 0
@@ -312,6 +509,8 @@ class TowerRunService {
         succeeded: succeeded,
         combatShare: combatShare,
         formation: party.formation,
+        monster: monsterProfile,
+        pressureDelta: familyPressureDelta + eliteModifier.pressureDelta,
       );
       final hpLoss = _heroHpLoss(
         hero,
@@ -320,14 +519,25 @@ class TowerRunService {
         succeeded: succeeded,
         combatShare: combatShare,
         formation: party.formation,
+        monster: monsterProfile,
+        pressureDelta: familyPressureDelta + eliteModifier.pressureDelta,
       );
       final minimumHp = max(1, hero.currentStats.maxHp ~/ (succeeded ? 5 : 6));
 
       final gainedLevels = hero.gainExp(expPerHero);
-      hero.currentStats.currentEng =
-          max(0, hero.currentStats.currentEng - energyLoss);
-      hero.currentStats.currentHp =
-          max(minimumHp, hero.currentStats.currentHp - hpLoss);
+      hero.currentStats.currentEng = max(
+        0,
+        hero.currentStats.currentEng - energyLoss,
+      );
+      hero.currentStats.currentHp = max(
+        minimumHp,
+        hero.currentStats.currentHp - hpLoss,
+      );
+      if ((monsterProfile.id == 'wraith' || monsterProfile.id == 'predator') &&
+          _random.nextDouble() > 0.78) {
+        hero.addStatusEffect('poisoned');
+      }
+      hero.refreshBodyCondition();
 
       hero.adjustBond(succeeded ? 2 : 1);
       hero.adjustFaith(succeeded ? 1 : -1);
@@ -341,7 +551,9 @@ class TowerRunService {
 
       if (gainedLevels > 0) {
         levelsGained[hero.id] = gainedLevels;
-        logLines.add('${hero.name} เลเวลอัป +$gainedLevels เป็น Lv.${hero.level}');
+        logLines.add(
+          '${hero.name} เลเวลอัป +$gainedLevels เป็น Lv.${hero.level}',
+        );
       }
     }
 
@@ -358,6 +570,7 @@ class TowerRunService {
       playerData.addItemRewards(itemRewards);
     }
 
+    final heroReports = aliveMembers.map(_heroReportFromState).toList();
     playerData.lastTowerSummary = logLines.join('\n');
     party.status = succeeded ? 'tower_climbing' : 'recovering';
 
@@ -372,6 +585,7 @@ class TowerRunService {
       expPerHero: expPerHero,
       itemRewards: itemRewards,
       levelsGained: levelsGained,
+      heroReports: heroReports,
       logLines: logLines,
     );
   }
@@ -401,6 +615,7 @@ class TowerRunService {
   static TowerDecisionEvent? maybeCreateMajorEvent({
     required PlayerData playerData,
     required int floor,
+    PartyModel? party,
   }) {
     if (floor <= 0 || floor % 5 != 0) {
       return null;
@@ -415,14 +630,22 @@ class TowerRunService {
     if (pendingChainId != null) {
       if (playerData.resolvedMajorChainEventIds.contains(pendingChainId)) {
         if (playerData.pendingMajorChainEventIds.isNotEmpty) {
-          playerData.pendingMajorChainEventIds =
-              playerData.pendingMajorChainEventIds.where((id) => id != pendingChainId).toList();
+          playerData.pendingMajorChainEventIds = playerData
+              .pendingMajorChainEventIds
+              .where((id) => id != pendingChainId)
+              .toList();
         }
-        playerData.pendingMajorChainEventId = playerData.pendingMajorChainEventIds.isEmpty
+        playerData.pendingMajorChainEventId =
+            playerData.pendingMajorChainEventIds.isEmpty
             ? null
             : playerData.pendingMajorChainEventIds.first;
       } else {
-        final chainEvent = _buildChainEvent(pendingChainId);
+        final chainEvent = _buildChainEvent(
+          pendingChainId,
+          playerData: playerData,
+          floor: floor,
+          party: party,
+        );
         if (chainEvent != null) {
           return chainEvent;
         }
@@ -431,8 +654,9 @@ class TowerRunService {
 
     final eventId = _majorEventOrder.firstWhere(
       (id) => !playerData.recentMajorEventIds.contains(id),
-      orElse: () => _majorEventOrder[
-          playerData.resolvedMajorEventFloors.length % _majorEventOrder.length],
+      orElse: () =>
+          _majorEventOrder[playerData.resolvedMajorEventFloors.length %
+              _majorEventOrder.length],
     );
 
     switch (eventId) {
@@ -520,7 +744,8 @@ class TowerRunService {
     final hasTowerMail = _countEquippedItems(party, {'tower_mail'}) > 0;
     final hasStrikeGear =
         _countEquippedItems(party, {'steel_blade', 'ranger_bow'}) > 0;
-    final seed = '${event.id}:${hero.id}:${party.formation}:${hero.bond}:${hero.faith}';
+    final seed =
+        '${event.id}:${hero.id}:${party.formation}:${hero.bond}:${hero.faith}';
 
     if (_isChainEvent(event.id)) {
       switch (event.id) {
@@ -651,8 +876,10 @@ class TowerRunService {
     final guardianCount = _countClasses(party, _guardianClasses);
     final emblemCount = _countEquippedItems(party, {'saints_emblem'});
     final guardGearCount = _countEquippedItems(party, {'tower_mail'});
-    final strikeGearCount =
-        _countEquippedItems(party, {'steel_blade', 'ranger_bow'});
+    final strikeGearCount = _countEquippedItems(party, {
+      'steel_blade',
+      'ranger_bow',
+    });
     final holySupport = holyCount + emblemCount;
     final frontlineSupport = frontlineCount + guardGearCount;
     final scoutSupport = scoutCount + strikeGearCount;
@@ -672,8 +899,10 @@ class TowerRunService {
       _recordMajorEvent(playerData, event.id, floor: floor);
       _queueChainEvent(playerData, 'pilgrim_rest');
       for (final hero in party.members) {
-        hero.currentStats.currentHp =
-            min(hero.currentStats.maxHp, hero.currentStats.currentHp + 30);
+        hero.currentStats.currentHp = min(
+          hero.currentStats.maxHp,
+          hero.currentStats.currentHp + 30,
+        );
         hero.currentStats.currentEng = min(
           hero.currentStats.maxEng,
           hero.currentStats.currentEng + 30 + (emblemCount > 0 ? 10 : 0),
@@ -704,8 +933,10 @@ class TowerRunService {
       for (final hero in party.members) {
         hero.adjustFaith(8);
         hero.adjustBond(4);
-        hero.currentStats.currentEng =
-            max(0, hero.currentStats.currentEng - (guardGearCount > 0 ? 5 : 10));
+        hero.currentStats.currentEng = max(
+          0,
+          hero.currentStats.currentEng - (guardGearCount > 0 ? 5 : 10),
+        );
         hero.baseStats.def += 2;
         hero.currentStats.def += 2;
       }
@@ -775,10 +1006,14 @@ class TowerRunService {
       _recordMajorEvent(playerData, event.id, floor: floor);
       _queueChainEvent(playerData, 'pilgrim_rest');
       for (final hero in party.members) {
-        hero.currentStats.currentHp =
-            min(hero.currentStats.maxHp, hero.currentStats.currentHp + 30);
-        hero.currentStats.currentEng =
-            min(hero.currentStats.maxEng, hero.currentStats.currentEng + 20);
+        hero.currentStats.currentHp = min(
+          hero.currentStats.maxHp,
+          hero.currentStats.currentHp + 30,
+        );
+        hero.currentStats.currentEng = min(
+          hero.currentStats.maxEng,
+          hero.currentStats.currentEng + 20,
+        );
         hero.adjustFaith(10);
         hero.baseStats.def += 2;
         hero.currentStats.def += 2;
@@ -824,8 +1059,10 @@ class TowerRunService {
       _queueChainEvent(playerData, 'vanguard_camp');
       for (final hero in party.members) {
         hero.adjustFaith(8);
-        hero.currentStats.currentEng =
-            max(0, hero.currentStats.currentEng - 10);
+        hero.currentStats.currentEng = max(
+          0,
+          hero.currentStats.currentEng - 10,
+        );
         hero.baseStats.def += 2;
         hero.currentStats.def += 2;
       }
@@ -876,9 +1113,7 @@ class TowerRunService {
         immediateItems: [supply],
         silverDelta: 0,
         goldDelta: 0,
-        logLines: const [
-          'ผู้รอดชีวิตบอกตำแหน่งค่ายลับในชั้นลึกให้ก่อนจากกัน',
-        ],
+        logLines: const ['ผู้รอดชีวิตบอกตำแหน่งค่ายลับในชั้นลึกให้ก่อนจากกัน'],
       );
     }
 
@@ -887,10 +1122,14 @@ class TowerRunService {
         _recordMajorEvent(playerData, event.id, floor: floor);
         if (optionId == 'vow') {
           for (final hero in party.members) {
-            hero.currentStats.currentHp =
-                min(hero.currentStats.maxHp, hero.currentStats.currentHp + 30);
-            hero.currentStats.currentEng =
-                min(hero.currentStats.maxEng, hero.currentStats.currentEng + 20);
+            hero.currentStats.currentHp = min(
+              hero.currentStats.maxHp,
+              hero.currentStats.currentHp + 30,
+            );
+            hero.currentStats.currentEng = min(
+              hero.currentStats.maxEng,
+              hero.currentStats.currentEng + 20,
+            );
             hero.adjustFaith(10);
             hero.baseStats.def += 2;
             hero.currentStats.def += 2;
@@ -901,7 +1140,9 @@ class TowerRunService {
             immediateItems: [],
             silverDelta: 0,
             goldDelta: 0,
-            logLines: ['ทีมถวายสัตย์ต่อศาลโบราณ ศรัทธาและการคุ้มกันเพิ่มขึ้นถาวร'],
+            logLines: [
+              'ทีมถวายสัตย์ต่อศาลโบราณ ศรัทธาและการคุ้มกันเพิ่มขึ้นถาวร',
+            ],
           );
         }
 
@@ -918,15 +1159,19 @@ class TowerRunService {
           immediateItems: [relic],
           silverDelta: 0,
           goldDelta: 0,
-          logLines: ['ทีมทำลายผนึกและชิงเศษรีลิกมาได้ พลังโจมตีเพิ่มขึ้น แต่ศรัทธาของทีมลดลงหนัก'],
+          logLines: [
+            'ทีมทำลายผนึกและชิงเศษรีลิกมาได้ พลังโจมตีเพิ่มขึ้น แต่ศรัทธาของทีมลดลงหนัก',
+          ],
         );
       case 'oath_gate':
         _recordMajorEvent(playerData, event.id, floor: floor);
         if (optionId == 'lead_from_front') {
           for (final hero in party.members) {
             hero.adjustFaith(8);
-            hero.currentStats.currentEng =
-                max(0, hero.currentStats.currentEng - 10);
+            hero.currentStats.currentEng = max(
+              0,
+              hero.currentStats.currentEng - 10,
+            );
             hero.baseStats.def += 2;
             hero.currentStats.def += 2;
           }
@@ -936,7 +1181,9 @@ class TowerRunService {
             immediateItems: [],
             silverDelta: 0,
             goldDelta: 0,
-            logLines: ['ผู้นำพาทีมฝ่าประตูด้วยตัวเอง ศรัทธาและวินัยแนวหน้าของทีมเพิ่มขึ้น'],
+            logLines: [
+              'ผู้นำพาทีมฝ่าประตูด้วยตัวเอง ศรัทธาและวินัยแนวหน้าของทีมเพิ่มขึ้น',
+            ],
           );
         }
 
@@ -951,7 +1198,9 @@ class TowerRunService {
           immediateItems: [],
           silverDelta: 0,
           goldDelta: 0,
-          logLines: ['ผู้นำเปิดให้ทีมร่วมตัดสินใจ Bond เพิ่มขึ้นชัดเจนและบรรยากาศดีขึ้น'],
+          logLines: [
+            'ผู้นำเปิดให้ทีมร่วมตัดสินใจ Bond เพิ่มขึ้นชัดเจนและบรรยากาศดีขึ้น',
+          ],
         );
       default:
         _recordMajorEvent(playerData, event.id, floor: floor);
@@ -984,7 +1233,9 @@ class TowerRunService {
           immediateItems: [],
           silverDelta: 0,
           goldDelta: 0,
-          logLines: ['ทีมปล่อยผู้รอดชีวิตไว้ข้างหลัง เดินหน้าได้เร็วขึ้น แต่ Bond และ Faith ลดลงอย่างชัดเจน'],
+          logLines: [
+            'ทีมปล่อยผู้รอดชีวิตไว้ข้างหลัง เดินหน้าได้เร็วขึ้น แต่ Bond และ Faith ลดลงอย่างชัดเจน',
+          ],
         );
     }
   }
@@ -1008,7 +1259,49 @@ class TowerRunService {
     }
   }
 
-  static TowerDecisionEvent? _buildChainEvent(String eventId) {
+  static TowerDecisionEvent? _buildChainEvent(
+    String eventId, {
+    PlayerData? playerData,
+    int floor = 0,
+    PartyModel? party,
+  }) {
+    if (playerData != null) {
+      if (eventId == 'secret_bazaar') {
+        return _buildMerchantEvent(
+          playerData,
+          floor,
+          eventId: eventId,
+          premium: false,
+        );
+      }
+      if (eventId == 'vault_market') {
+        return _buildMerchantEvent(
+          playerData,
+          floor,
+          eventId: eventId,
+          premium: true,
+        );
+      }
+      if (eventId == 'living_forge') {
+        return _buildBlacksmithEvent(
+          playerData,
+          party,
+          floor,
+          eventId: eventId,
+          premium: false,
+        );
+      }
+      if (eventId == 'ember_forge') {
+        return _buildBlacksmithEvent(
+          playerData,
+          party,
+          floor,
+          eventId: eventId,
+          premium: true,
+        );
+      }
+    }
+
     switch (eventId) {
       case 'pilgrim_rest':
         return const TowerDecisionEvent(
@@ -1101,8 +1394,7 @@ class TowerRunService {
             TowerDecisionOption(
               id: 'trade_supplies',
               title: 'ขนเสบียงกลับ',
-              description:
-                  'แปลงจุดนี้เป็นเสบียงและเงินสำหรับพักฟื้นทันที',
+              description: 'แปลงจุดนี้เป็นเสบียงและเงินสำหรับพักฟื้นทันที',
             ),
             TowerDecisionOption(
               id: 'recruit_guides',
@@ -1127,7 +1419,8 @@ class TowerRunService {
             TowerDecisionOption(
               id: 'buy_route_map',
               title: 'ซื้อแผนที่ลักลอบ',
-              description: 'จ่ายเงินเพื่อให้เส้นทางถัดไปปลอดภัยและเก็บของได้คุ้มขึ้น',
+              description:
+                  'จ่ายเงินเพื่อให้เส้นทางถัดไปปลอดภัยและเก็บของได้คุ้มขึ้น',
             ),
           ],
         );
@@ -1231,6 +1524,598 @@ class TowerRunService {
     }
   }
 
+  static TowerDecisionEvent _buildMerchantEvent(
+    PlayerData playerData,
+    int floor, {
+    required String eventId,
+    required bool premium,
+  }) {
+    final offers =
+        ItemUsageService.merchantOffersFor(
+          playerData,
+          floor,
+          premium: premium,
+        ).where((offer) {
+          final stock = _ensureEventStock(
+            playerData,
+            eventId: eventId,
+            itemId: offer.itemId,
+            premium: premium,
+          );
+          return stock > 0 &&
+              offer.silverCost <= playerData.silver &&
+              offer.goldCost <= playerData.gold;
+        }).toList();
+
+    final options = <TowerDecisionOption>[
+      ...offers.map(
+        (offer) => TowerDecisionOption(
+          id: offer.optionId,
+          title: 'ซื้อ ${offer.title}',
+          description: _marketOfferDescription(offer),
+        ),
+      ),
+      if (eventId == 'secret_bazaar')
+        const TowerDecisionOption(
+          id: 'broker_goods',
+          title: 'เปิดโต๊ะเจรจา',
+          description: 'เปลี่ยนของส่วนเกินในคลังเป็นเงินหมุน พร้อมข่าวการค้า',
+        ),
+      if (eventId == 'secret_bazaar')
+        const TowerDecisionOption(
+          id: 'buy_route_map',
+          title: 'ซื้อแผนที่ลักลอบ',
+          description: 'จ่ายเงินเพื่อให้เส้นทางถัดไปปลอดภัยและเก็บของได้ดีขึ้น',
+        ),
+      if (eventId == 'vault_market')
+        const TowerDecisionOption(
+          id: 'cash_out',
+          title: 'ถอนทุนกลับฐาน',
+          description: 'เปลี่ยนของหายากบางส่วนเป็นเงินและทองเพื่อเก็บสภาพคล่อง',
+        ),
+    ];
+
+    return TowerDecisionEvent(
+      id: eventId,
+      title: eventId == 'secret_bazaar' ? 'ตลาดลับกลางหอ' : 'โกดังใต้เงา',
+      description: eventId == 'secret_bazaar'
+          ? 'พ่อค้าเงาเปิดของตามสภาพคลังของคุณ ราคาจะขยับตามความขาดแคลนและความหายากของไอเทม'
+          : 'โกดังชั้นลึกเปิดขายของพิเศษเฉพาะรอบนี้ ต้นทุนสูงขึ้นตามความแรร์และของที่คุณถืออยู่',
+      options: options,
+    );
+  }
+
+  static TowerDecisionEvent _buildBlacksmithEvent(
+    PlayerData playerData,
+    PartyModel? party,
+    int floor, {
+    required String eventId,
+    required bool premium,
+  }) {
+    final offers =
+        ItemUsageService.blacksmithOffersFor(
+          playerData,
+          floor,
+          premium: premium,
+        ).where((offer) {
+          final stock = _ensureEventStock(
+            playerData,
+            eventId: eventId,
+            itemId: offer.itemId,
+            premium: premium,
+          );
+          return stock > 0 &&
+              offer.silverCost <= playerData.silver &&
+              offer.goldCost <= playerData.gold;
+        }).toList();
+    final smithTargets = party == null
+        ? const <BlacksmithTarget>[]
+        : _blacksmithTargets(party);
+    final rerollCount = playerData.eventRerollCountFor(
+      _eventRerollKey(playerData, eventId),
+    );
+
+    final options = <TowerDecisionOption>[
+      ...offers.map(
+        (offer) => TowerDecisionOption(
+          id: offer.optionId,
+          title: 'ตีซื้อ ${offer.title}',
+          description: _marketOfferDescription(offer),
+        ),
+      ),
+      ...smithTargets.take(premium ? 4 : 2).expand((target) {
+        final upgradeCost = _smithUpgradeSilverCost(
+          target.hero,
+          target.slot,
+          premium: premium,
+        );
+        final rerollCost = _smithRerollSilverCost(
+          target.hero,
+          target.slot,
+          rerollCount: rerollCount,
+          premium: premium,
+        );
+        return <TowerDecisionOption>[
+          if (upgradeCost <= playerData.silver)
+            TowerDecisionOption(
+              id: 'smith_upgrade:${target.hero.id}:${target.slot.name}:$upgradeCost:0',
+              title: 'ตีบวก ${target.hero.name}',
+              description:
+                  'อัปเกรด${_slotLabel(target.slot)}ที่สวมอยู่ ใช้ $upgradeCost Silver',
+            ),
+          if (rerollCost <= playerData.silver)
+            TowerDecisionOption(
+              id: 'smith_reroll:${target.hero.id}:${target.slot.name}:$rerollCost:0',
+              title: 'รีโรล ${target.hero.name}',
+              description:
+                  'สุ่มค่าสายใหม่ให้${_slotLabel(target.slot)} ใช้ $rerollCost Silver',
+            ),
+        ];
+      }),
+      if (eventId == 'living_forge')
+        const TowerDecisionOption(
+          id: 'temper_mail',
+          title: 'ชุบเกราะทั้งทีม',
+          description: 'ลดแรงปะทะและความเหนื่อยของรอบถัดไป แทนการซื้อของใหม่',
+        ),
+      if (eventId == 'ember_forge')
+        const TowerDecisionOption(
+          id: 'bank_the_flame',
+          title: 'กักประกายไฟ',
+          description: 'รับเงินและวัตถุดิบกลับฐานแบบปลอดภัยกว่าการตีของชิ้นเอก',
+        ),
+    ];
+
+    return TowerDecisionEvent(
+      id: eventId,
+      title: eventId == 'living_forge' ? 'เตาหลอมมีชีวิต' : 'แกนเพลิงโลหิต',
+      description: eventId == 'living_forge'
+          ? 'ช่างตีเหล็กจะเปิดของตามระดับชั้นและของที่คุณมีอยู่ ราคาอุปกรณ์จะผันตามความขาดตลาด'
+          : 'เตาหลอมชั้นลึกขายอุปกรณ์หายากและวัตถุดิบชั้นสูง ค่าตีและราคาจะผันตามความแรร์ของของที่เลือก',
+      options: options,
+    );
+  }
+
+  static TowerDecisionOutcome _applyMarketPurchase({
+    required PlayerData playerData,
+    required TowerDecisionEvent event,
+    required String optionId,
+    required int compassCount,
+    required int forgeHeartCount,
+  }) {
+    final parts = optionId.split(':');
+    if (parts.length < 4) {
+      return const TowerDecisionOutcome(
+        enemyModifierDelta: 0,
+        rewardModifierDelta: 0,
+        immediateItems: [],
+        silverDelta: 0,
+        goldDelta: 0,
+        logLines: ['คำสั่งซื้อไม่ถูกต้อง'],
+      );
+    }
+
+    final itemId = parts[1];
+    final silverCost = int.tryParse(parts[2]) ?? 0;
+    final goldCost = int.tryParse(parts[3]) ?? 0;
+    final stockKey = _eventStockKey(
+      playerData,
+      eventId: event.id,
+      itemId: itemId,
+    );
+    if (playerData.eventStockFor(stockKey) <= 0) {
+      return const TowerDecisionOutcome(
+        enemyModifierDelta: 0,
+        rewardModifierDelta: 0,
+        immediateItems: [],
+        silverDelta: 0,
+        goldDelta: 0,
+        logLines: ['ของชิ้นนี้หมดสต็อกแล้วในรอบสำรวจนี้'],
+      );
+    }
+    if (playerData.silver < silverCost || playerData.gold < goldCost) {
+      return const TowerDecisionOutcome(
+        enemyModifierDelta: 0,
+        rewardModifierDelta: 0,
+        immediateItems: [],
+        silverDelta: 0,
+        goldDelta: 0,
+        logLines: ['เงินไม่พอสำหรับซื้อของจากเหตุการณ์นี้'],
+      );
+    }
+
+    playerData.consumeEventStock(stockKey);
+    final reward = _itemReward(itemId);
+    playerData.addItemRewards([reward]);
+
+    switch (event.id) {
+      case 'secret_bazaar':
+        if (compassCount > 0) {
+          _queueChainEvent(playerData, 'vault_market');
+        }
+        return TowerDecisionOutcome(
+          enemyModifierDelta: -12,
+          rewardModifierDelta: 20,
+          immediateItems: [reward],
+          silverDelta: -silverCost,
+          goldDelta: -goldCost,
+          logLines: [
+            'ตลาดลับปล่อย ${reward.name} ให้ทีมในราคาตามสภาพตลาด',
+            if (compassCount > 0) 'พิกัดโกดังใต้เงาถูกส่งต่อให้ทีม',
+          ],
+        );
+      case 'vault_market':
+        return TowerDecisionOutcome(
+          enemyModifierDelta: -6,
+          rewardModifierDelta: 34,
+          immediateItems: [reward],
+          silverDelta: -silverCost,
+          goldDelta: -goldCost,
+          logLines: ['ทีมทุ่มทุนแลก ${reward.name} จากโกดังใต้เงา'],
+        );
+      case 'living_forge':
+        if (forgeHeartCount > 0) {
+          _queueChainEvent(playerData, 'ember_forge');
+        }
+        return TowerDecisionOutcome(
+          enemyModifierDelta: -8,
+          rewardModifierDelta: 24,
+          immediateItems: [reward],
+          silverDelta: -silverCost,
+          goldDelta: -goldCost,
+          logLines: [
+            'ช่างตีเหล็กจัด ${reward.name} ให้ทีมพร้อมคำแนะนำการลุยชั้นถัดไป',
+            if (forgeHeartCount > 0) 'Forge Heart เปิดเส้นทางสู่แกนเพลิงโลหิต',
+          ],
+        );
+      case 'ember_forge':
+        return TowerDecisionOutcome(
+          enemyModifierDelta: 4,
+          rewardModifierDelta: 40,
+          immediateItems: [reward],
+          silverDelta: -silverCost,
+          goldDelta: -goldCost,
+          logLines: ['เตาหลอมชั้นลึกสร้าง ${reward.name} ให้ทีมทันที'],
+        );
+      default:
+        return TowerDecisionOutcome(
+          enemyModifierDelta: 0,
+          rewardModifierDelta: 0,
+          immediateItems: [reward],
+          silverDelta: -silverCost,
+          goldDelta: -goldCost,
+          logLines: ['ทีมได้รับ ${reward.name}'],
+        );
+    }
+  }
+
+  static String _marketOfferDescription(EventMarketOffer offer) {
+    if (offer.goldCost > 0) {
+      return '${offer.description}\nจ่าย ${offer.silverCost} Silver + ${offer.goldCost} Gold';
+    }
+    return '${offer.description}\nจ่าย ${offer.silverCost} Silver';
+  }
+
+  static String _eventStockKey(
+    PlayerData playerData, {
+    required String eventId,
+    required String itemId,
+  }) {
+    return '${playerData.currentTowerRunId}:$eventId:$itemId';
+  }
+
+  static String _eventRerollKey(PlayerData playerData, String eventId) {
+    return '${playerData.currentTowerRunId}:$eventId:reroll';
+  }
+
+  static int _ensureEventStock(
+    PlayerData playerData, {
+    required String eventId,
+    required String itemId,
+    required bool premium,
+  }) {
+    final stockKey = _eventStockKey(
+      playerData,
+      eventId: eventId,
+      itemId: itemId,
+    );
+    if (playerData.eventMarketStock.containsKey(stockKey)) {
+      return playerData.eventStockFor(stockKey);
+    }
+
+    final definition = ItemUsageService.definitionFor(itemId);
+    final rarity = definition?.rarity ?? 1;
+    final score =
+        (playerData.currentTowerRunId * 31) +
+        eventId.codeUnits.fold<int>(0, (sum, code) => sum + code) +
+        itemId.codeUnits.fold<int>(0, (sum, code) => sum + code);
+    final variance = score % (premium ? 2 : 3);
+    var quantity = premium ? 1 + (variance % 2) : 2 + variance;
+    quantity -= max(0, rarity - (premium ? 3 : 2));
+    if (definition?.equipmentSlot != null) {
+      quantity = min(quantity, premium ? 2 : 1);
+    }
+    quantity = quantity.clamp(1, premium ? 2 : 4);
+    playerData.setEventStock(stockKey, quantity);
+    return quantity;
+  }
+
+  static List<BlacksmithTarget> _blacksmithTargets(PartyModel party) {
+    final targets = <BlacksmithTarget>[];
+    for (final hero in party.members) {
+      for (final entry in hero.equippedItemIds.entries) {
+        final slot = EquipmentSlot.values.firstWhere(
+          (value) => value.name == entry.key,
+          orElse: () => EquipmentSlot.relic,
+        );
+        targets.add(
+          BlacksmithTarget(hero: hero, slot: slot, itemId: entry.value),
+        );
+      }
+    }
+
+    targets.sort((a, b) {
+      final rarityA = ItemUsageService.definitionFor(a.itemId)?.rarity ?? 1;
+      final rarityB = ItemUsageService.definitionFor(b.itemId)?.rarity ?? 1;
+      final compareRarity = rarityB.compareTo(rarityA);
+      if (compareRarity != 0) {
+        return compareRarity;
+      }
+      final upgradeA = a.hero.equipmentUpgradeLevelForSlot(a.slot);
+      final upgradeB = b.hero.equipmentUpgradeLevelForSlot(b.slot);
+      return upgradeA.compareTo(upgradeB);
+    });
+    return targets;
+  }
+
+  static int _smithUpgradeSilverCost(
+    HeroModel hero,
+    EquipmentSlot slot, {
+    required bool premium,
+  }) {
+    final level = hero.equipmentUpgradeLevelForSlot(slot);
+    final slotBase = switch (slot) {
+      EquipmentSlot.weapon => 180,
+      EquipmentSlot.armor => 160,
+      EquipmentSlot.relic => 220,
+    };
+    return slotBase + (premium ? 60 : 0) + (level * 90);
+  }
+
+  static int _smithRerollSilverCost(
+    HeroModel hero,
+    EquipmentSlot slot, {
+    required int rerollCount,
+    required bool premium,
+  }) {
+    final slotBase = switch (slot) {
+      EquipmentSlot.weapon => 130,
+      EquipmentSlot.armor => 120,
+      EquipmentSlot.relic => 170,
+    };
+    final rarity =
+        ItemUsageService.definitionFor(
+          hero.equippedItemIdForSlot(slot) ?? '',
+        )?.rarity ??
+        1;
+    return slotBase + (rarity * 35) + (rerollCount * 70) + (premium ? 40 : 0);
+  }
+
+  static String _slotLabel(EquipmentSlot slot) {
+    switch (slot) {
+      case EquipmentSlot.weapon:
+        return 'อาวุธ';
+      case EquipmentSlot.armor:
+        return 'ชุดเกราะ';
+      case EquipmentSlot.relic:
+        return 'เครื่องราง';
+    }
+  }
+
+  static HeroStats _definitionBonusForItem(String itemId) {
+    return ItemUsageService.definitionFor(itemId)?.statBonus?.clone() ??
+        HeroStats.zero();
+  }
+
+  static HeroStats _smithUpgradedBonus(
+    HeroModel hero,
+    EquipmentSlot slot,
+    String itemId,
+  ) {
+    final current =
+        hero.equippedItemBonuses[slot.name]?.clone() ??
+        _definitionBonusForItem(itemId);
+    final rarity = ItemUsageService.definitionFor(itemId)?.rarity ?? 1;
+    final nextLevel = hero.equipmentUpgradeLevelForSlot(slot) + 1;
+
+    switch (slot) {
+      case EquipmentSlot.weapon:
+        current.atk += 2 + rarity;
+        current.spd += nextLevel.isEven ? 1 : 0;
+        current.luk += rarity >= 4 ? 1 : 0;
+        break;
+      case EquipmentSlot.armor:
+        final hpGain = 8 + (rarity * 3);
+        current.maxHp += hpGain;
+        current.currentHp += hpGain;
+        current.def += 2 + rarity;
+        break;
+      case EquipmentSlot.relic:
+        final engGain = 4 + (rarity * 2);
+        current.maxEng += engGain;
+        current.currentEng += engGain;
+        current.luk += 1 + (rarity ~/ 2);
+        current.spd += 1;
+        if (nextLevel % 2 == 0) {
+          current.def += 1;
+        }
+        break;
+    }
+    return current;
+  }
+
+  static HeroStats _smithRerolledBonus(
+    PlayerData playerData,
+    HeroModel hero,
+    EquipmentSlot slot,
+    String itemId, {
+    required int rerollCount,
+  }) {
+    final seed =
+        (playerData.currentTowerRunId * 97) +
+        hero.id.codeUnits.fold<int>(0, (sum, code) => sum + code) +
+        slot.name.codeUnits.fold<int>(0, (sum, code) => sum + code) +
+        itemId.codeUnits.fold<int>(0, (sum, code) => sum + code) +
+        (rerollCount * 17);
+    final random = Random(seed);
+    final base = _definitionBonusForItem(itemId);
+    final rarity = ItemUsageService.definitionFor(itemId)?.rarity ?? 1;
+
+    switch (slot) {
+      case EquipmentSlot.weapon:
+        return HeroStats(
+          maxHp: 0,
+          currentHp: 0,
+          atk: max(1, base.atk + 1 + random.nextInt(3 + rarity)),
+          def: 0,
+          spd: max(0, base.spd + random.nextInt(2 + rarity)),
+          maxEng: 0,
+          currentEng: 0,
+          luk: max(0, base.luk + random.nextInt(1 + rarity)),
+        );
+      case EquipmentSlot.armor:
+        final hpGain = 6 + random.nextInt(8 + (rarity * 3));
+        final defGain = 2 + random.nextInt(3 + rarity);
+        final engGain = random.nextInt(2 + rarity);
+        return HeroStats(
+          maxHp: max(10, base.maxHp + hpGain),
+          currentHp: max(10, base.currentHp + hpGain),
+          atk: 0,
+          def: max(1, base.def + defGain),
+          spd: max(0, base.spd + random.nextInt(2)),
+          maxEng: base.maxEng + engGain,
+          currentEng: base.currentEng + engGain,
+          luk: base.luk,
+        );
+      case EquipmentSlot.relic:
+        final engGain = 2 + random.nextInt(4 + rarity);
+        return HeroStats(
+          maxHp: base.maxHp,
+          currentHp: base.currentHp,
+          atk: max(0, base.atk + random.nextInt(2)),
+          def: base.def + random.nextInt(1 + rarity),
+          spd: base.spd + random.nextInt(2 + rarity),
+          maxEng: base.maxEng + engGain,
+          currentEng: base.currentEng + engGain,
+          luk: base.luk + 1 + random.nextInt(2 + rarity),
+        );
+    }
+  }
+
+  static TowerDecisionOutcome _applySmithAction({
+    required PlayerData playerData,
+    required PartyModel party,
+    required TowerDecisionEvent event,
+    required String optionId,
+  }) {
+    final parts = optionId.split(':');
+    if (parts.length < 5) {
+      return const TowerDecisionOutcome(
+        enemyModifierDelta: 0,
+        rewardModifierDelta: 0,
+        immediateItems: [],
+        silverDelta: 0,
+        goldDelta: 0,
+        logLines: ['คำสั่งช่างตีเหล็กไม่ถูกต้อง'],
+      );
+    }
+
+    final action = parts[0];
+    final heroId = parts[1];
+    final slotName = parts[2];
+    final silverCost = int.tryParse(parts[3]) ?? 0;
+    final goldCost = int.tryParse(parts[4]) ?? 0;
+    final heroIndex = party.members.indexWhere((entry) => entry.id == heroId);
+    if (heroIndex < 0) {
+      return const TowerDecisionOutcome(
+        enemyModifierDelta: 0,
+        rewardModifierDelta: 0,
+        immediateItems: [],
+        silverDelta: 0,
+        goldDelta: 0,
+        logLines: ['ไม่พบฮีโร่เป้าหมายของช่างตีเหล็ก'],
+      );
+    }
+    final hero = party.members[heroIndex];
+
+    final slot = EquipmentSlot.values.firstWhere(
+      (value) => value.name == slotName,
+      orElse: () => EquipmentSlot.relic,
+    );
+    final itemId = hero.equippedItemIdForSlot(slot);
+    if (itemId == null) {
+      return TowerDecisionOutcome(
+        enemyModifierDelta: 0,
+        rewardModifierDelta: 0,
+        immediateItems: const [],
+        silverDelta: 0,
+        goldDelta: 0,
+        logLines: ['${hero.name} ไม่มี${_slotLabel(slot)}ให้ปรับแต่ง'],
+      );
+    }
+    if (playerData.silver < silverCost || playerData.gold < goldCost) {
+      return const TowerDecisionOutcome(
+        enemyModifierDelta: 0,
+        rewardModifierDelta: 0,
+        immediateItems: [],
+        silverDelta: 0,
+        goldDelta: 0,
+        logLines: ['เงินไม่พอสำหรับบริการของช่างตีเหล็ก'],
+      );
+    }
+
+    final itemName = ItemUsageService.definitionFor(itemId)?.name ?? itemId;
+    if (action == 'smith_upgrade') {
+      final nextBonus = _smithUpgradedBonus(hero, slot, itemId);
+      final nextLevel = hero.equipmentUpgradeLevelForSlot(slot) + 1;
+      hero.reforgeEquippedItem(slot, nextBonus, upgradeLevel: nextLevel);
+      return TowerDecisionOutcome(
+        enemyModifierDelta: -4,
+        rewardModifierDelta: 12 + nextLevel,
+        immediateItems: const [],
+        silverDelta: -silverCost,
+        goldDelta: -goldCost,
+        logLines: [
+          'ช่างตีเหล็กอัปเกรด$itemName ของ ${hero.name} เป็น +$nextLevel',
+        ],
+      );
+    }
+
+    final rerollKey = _eventRerollKey(playerData, event.id);
+    final rerollCount = playerData.eventRerollCountFor(rerollKey);
+    final nextBonus = _smithRerolledBonus(
+      playerData,
+      hero,
+      slot,
+      itemId,
+      rerollCount: rerollCount,
+    );
+    playerData.incrementEventReroll(rerollKey);
+    hero.reforgeEquippedItem(
+      slot,
+      nextBonus,
+      upgradeLevel: hero.equipmentUpgradeLevelForSlot(slot),
+    );
+    return TowerDecisionOutcome(
+      enemyModifierDelta: 0,
+      rewardModifierDelta: 10 + max(1, nextBonus.luk + nextBonus.spd),
+      immediateItems: const [],
+      silverDelta: -silverCost,
+      goldDelta: -goldCost,
+      logLines: ['ช่างตีเหล็กตีสายใหม่ให้$itemName ของ ${hero.name}'],
+    );
+  }
+
   static void _queueChainEvent(PlayerData playerData, String eventId) {
     if (playerData.resolvedMajorChainEventIds.contains(eventId) ||
         playerData.pendingMajorChainEventIds.contains(eventId) ||
@@ -1241,7 +2126,8 @@ class TowerRunService {
       ...playerData.pendingMajorChainEventIds,
       eventId,
     ];
-    playerData.pendingMajorChainEventId = playerData.pendingMajorChainEventIds.first;
+    playerData.pendingMajorChainEventId =
+        playerData.pendingMajorChainEventIds.first;
   }
 
   static void _resolveChainEvent(
@@ -1249,9 +2135,11 @@ class TowerRunService {
     String eventId, {
     required int floor,
   }) {
-    playerData.pendingMajorChainEventIds =
-        playerData.pendingMajorChainEventIds.where((id) => id != eventId).toList();
-    playerData.pendingMajorChainEventId = playerData.pendingMajorChainEventIds.isEmpty
+    playerData.pendingMajorChainEventIds = playerData.pendingMajorChainEventIds
+        .where((id) => id != eventId)
+        .toList();
+    playerData.pendingMajorChainEventId =
+        playerData.pendingMajorChainEventIds.isEmpty
         ? null
         : playerData.pendingMajorChainEventIds.first;
     if (!playerData.resolvedMajorChainEventIds.contains(eventId)) {
@@ -1277,12 +2165,32 @@ class TowerRunService {
   }) {
     final emblemCount = _countEquippedItems(party, {'saints_emblem'});
     final guardGearCount = _countEquippedItems(party, {'tower_mail'});
-    final strikeGearCount =
-        _countEquippedItems(party, {'steel_blade', 'ranger_bow'});
+    final strikeGearCount = _countEquippedItems(party, {
+      'steel_blade',
+      'ranger_bow',
+    });
     final compassCount = _countEquippedItems(party, {'wayfinder_compass'});
     final forgeHeartCount = _countEquippedItems(party, {'forge_heart'});
     final lanternCount = _countEquippedItems(party, {'sanctum_lantern'});
     _resolveChainEvent(playerData, event.id, floor: floor);
+
+    if (optionId.startsWith('market_buy:')) {
+      return _applyMarketPurchase(
+        playerData: playerData,
+        event: event,
+        optionId: optionId,
+        compassCount: compassCount,
+        forgeHeartCount: forgeHeartCount,
+      );
+    }
+    if (optionId.startsWith('smith_')) {
+      return _applySmithAction(
+        playerData: playerData,
+        party: party,
+        event: event,
+        optionId: optionId,
+      );
+    }
 
     switch (event.id) {
       case 'pilgrim_rest':
@@ -1292,10 +2200,14 @@ class TowerRunService {
           }
           for (final hero in party.members) {
             hero.adjustFaith(8 + (emblemCount > 0 ? 2 : 0));
-            hero.currentStats.currentHp =
-                min(hero.currentStats.maxHp, hero.currentStats.currentHp + 35);
-            hero.currentStats.currentEng =
-                min(hero.currentStats.maxEng, hero.currentStats.currentEng + 25);
+            hero.currentStats.currentHp = min(
+              hero.currentStats.maxHp,
+              hero.currentStats.currentHp + 35,
+            );
+            hero.currentStats.currentEng = min(
+              hero.currentStats.maxEng,
+              hero.currentStats.currentEng + 25,
+            );
           }
           return TowerDecisionOutcome(
             enemyModifierDelta: -25 - (emblemCount > 0 ? 10 : 0),
@@ -1363,8 +2275,10 @@ class TowerRunService {
             _queueChainEvent(playerData, 'living_forge');
           }
           for (final hero in party.members) {
-            hero.currentStats.currentHp =
-                min(hero.currentStats.maxHp, hero.currentStats.currentHp + 20);
+            hero.currentStats.currentHp = min(
+              hero.currentStats.maxHp,
+              hero.currentStats.currentHp + 20,
+            );
             hero.currentStats.currentEng = min(
               hero.currentStats.maxEng,
               hero.currentStats.currentEng + 20 + (guardGearCount > 0 ? 10 : 0),
@@ -1468,7 +2382,12 @@ class TowerRunService {
             playerData.inventory.fold<int>(
                   0,
                   (sum, item) =>
-                      sum + ((ItemUsageService.definitionFor(item.id)?.sellSilverValue ?? 8) * item.quantity),
+                      sum +
+                      ((ItemUsageService.definitionFor(
+                                item.id,
+                              )?.sellSilverValue ??
+                              8) *
+                          item.quantity),
                 ) ~/
                 5,
           );
@@ -1530,8 +2449,10 @@ class TowerRunService {
           for (final hero in party.members) {
             hero.baseStats.atk += 2;
             hero.currentStats.atk += 2;
-            hero.currentStats.currentEng =
-                max(0, hero.currentStats.currentEng - 8);
+            hero.currentStats.currentEng = max(
+              0,
+              hero.currentStats.currentEng - 8,
+            );
           }
           return TowerDecisionOutcome(
             enemyModifierDelta: 5,
@@ -1546,10 +2467,14 @@ class TowerRunService {
           );
         }
         for (final hero in party.members) {
-          hero.currentStats.currentHp =
-              min(hero.currentStats.maxHp, hero.currentStats.currentHp + 18);
-          hero.currentStats.currentEng =
-              min(hero.currentStats.maxEng, hero.currentStats.currentEng + 18);
+          hero.currentStats.currentHp = min(
+            hero.currentStats.maxHp,
+            hero.currentStats.currentHp + 18,
+          );
+          hero.currentStats.currentEng = min(
+            hero.currentStats.maxEng,
+            hero.currentStats.currentEng + 18,
+          );
         }
         return const TowerDecisionOutcome(
           enemyModifierDelta: -40,
@@ -1599,10 +2524,14 @@ class TowerRunService {
           for (final hero in party.members) {
             hero.adjustFaith(10 + (lanternCount > 0 ? 3 : 0));
             hero.adjustBond(4);
-            hero.currentStats.currentHp =
-                min(hero.currentStats.maxHp, hero.currentStats.currentHp + 22);
-            hero.currentStats.currentEng =
-                min(hero.currentStats.maxEng, hero.currentStats.currentEng + 22);
+            hero.currentStats.currentHp = min(
+              hero.currentStats.maxHp,
+              hero.currentStats.currentHp + 22,
+            );
+            hero.currentStats.currentEng = min(
+              hero.currentStats.maxEng,
+              hero.currentStats.currentEng + 22,
+            );
           }
           return TowerDecisionOutcome(
             enemyModifierDelta: -30,
@@ -1634,10 +2563,14 @@ class TowerRunService {
           playerData.addItemRewards([reward]);
           for (final hero in party.members) {
             hero.adjustFaith(6);
-            hero.currentStats.currentHp =
-                min(hero.currentStats.maxHp, hero.currentStats.currentHp + 28);
-            hero.currentStats.currentEng =
-                min(hero.currentStats.maxEng, hero.currentStats.currentEng + 24);
+            hero.currentStats.currentHp = min(
+              hero.currentStats.maxHp,
+              hero.currentStats.currentHp + 28,
+            );
+            hero.currentStats.currentEng = min(
+              hero.currentStats.maxEng,
+              hero.currentStats.currentEng + 24,
+            );
           }
           return TowerDecisionOutcome(
             enemyModifierDelta: -32,
@@ -1645,9 +2578,7 @@ class TowerRunService {
             immediateItems: [reward],
             silverDelta: 0,
             goldDelta: 1,
-            logLines: const [
-              'คลังรุ่งอรุณมอบพระคุณและของศักดิ์สิทธิ์ให้ทีม',
-            ],
+            logLines: const ['คลังรุ่งอรุณมอบพระคุณและของศักดิ์สิทธิ์ให้ทีม'],
           );
         }
         final dawnLoot = [
@@ -1755,13 +2686,52 @@ class TowerRunService {
         party.members.every((hero) => !hero.isRecovering);
   }
 
+  static int entryFeeForFloor(int floor) {
+    if (floor <= 1) {
+      return 40;
+    }
+    return (40 + (floor * 18)).clamp(40, 2400);
+  }
+
+  static bool canEnterTower(PlayerData playerData, int floor) {
+    return playerData.itemQuantity(towerWarpStoneItemId) > 0 &&
+        playerData.silver >= entryFeeForFloor(floor);
+  }
+
+  static bool consumeTowerEntryCost(PlayerData playerData, int floor) {
+    if (!canEnterTower(playerData, floor)) {
+      return false;
+    }
+
+    final consumed = playerData.consumeItem(towerWarpStoneItemId);
+    if (!consumed) {
+      return false;
+    }
+    playerData.silver -= entryFeeForFloor(floor);
+    return true;
+  }
+
+  static void preparePartyForExpedition(PartyModel party) {
+    for (final hero in party.members) {
+      hero.clearAction();
+      hero.currentTarget = null;
+      hero.skillCooldowns = {};
+      hero.refreshBodyCondition();
+      if (hero.currentMana <= 0) {
+        hero.restoreMana(max(12, hero.maxMana ~/ 2));
+      }
+    }
+  }
+
   static int quickRecoverySilverCost(PartyModel party) {
     if (party.members.isEmpty) {
       return 0;
     }
 
-    final totalFatigue =
-        party.members.fold<int>(0, (sum, hero) => sum + _fatigueScore(hero));
+    final totalFatigue = party.members.fold<int>(
+      0,
+      (sum, hero) => sum + _fatigueScore(hero),
+    );
     final remainingMinutes = party.members.fold<int>(
       0,
       (sum, hero) => sum + hero.recoveryCooldownRemaining.inMinutes,
@@ -1939,6 +2909,182 @@ class TowerRunService {
     return factor.clamp(0.72, 1.0);
   }
 
+  static TowerHeroActionEffect _prepareHeroAction({
+    required PlayerData playerData,
+    required HeroModel hero,
+    required int floor,
+    required MonsterProfile monster,
+  }) {
+    hero.tickSkillCooldowns();
+    final lowHp =
+        hero.currentStats.currentHp <= (hero.currentStats.maxHp * 0.4);
+    final lowMana = hero.currentMana <= max(10, hero.maxMana ~/ 4);
+    final poisoned = hero.isPoisoned;
+
+    String? itemUsed;
+    if (poisoned && playerData.itemQuantity('antidote_potion') > 0) {
+      playerData.consumeItem('antidote_potion');
+      hero.removeStatusEffect('poisoned');
+      hero.currentStats.currentHp = min(
+        hero.currentStats.maxHp,
+        hero.currentStats.currentHp + 12,
+      );
+      itemUsed = 'Antidote Potion';
+    } else if (lowHp && playerData.itemQuantity('healing_potion') > 0) {
+      playerData.consumeItem('healing_potion');
+      hero.currentStats.currentHp = min(
+        hero.currentStats.maxHp,
+        hero.currentStats.currentHp + 70,
+      );
+      hero.removeStatusEffect('wounded');
+      itemUsed = 'Healing Potion';
+    } else if (lowMana && playerData.itemQuantity('mana_potion') > 0) {
+      playerData.consumeItem('mana_potion');
+      hero.restoreMana(50);
+      hero.currentStats.currentEng = min(
+        hero.currentStats.maxEng,
+        hero.currentStats.currentEng + 12,
+      );
+      hero.removeStatusEffect('exhausted');
+      itemUsed = 'Mana Potion';
+    }
+
+    final skill = SkillProgressionService.chooseCombatSkill(
+      hero,
+      lowHp: lowHp,
+      lowMana: lowMana,
+      poisoned: poisoned,
+    );
+    var partyPowerDelta = 0;
+    var enemyPowerDelta = 0;
+    var rewardDelta = 0;
+    var action = 'โจมตีพื้นฐาน';
+    final target = _monsterTargetLabel(monster);
+
+    if (skill != null && hero.spendMana(skill.manaCost)) {
+      hero.setSkillCooldown(skill.id, skill.cooldownTurns);
+      action = 'ใช้สกิล ${skill.name}';
+      switch (skill.role) {
+        case 'attack':
+          partyPowerDelta += skill.powerRating;
+          enemyPowerDelta += max(4, skill.powerRating ~/ 3);
+          break;
+        case 'guard':
+          partyPowerDelta += skill.powerRating ~/ 2;
+          enemyPowerDelta += skill.powerRating;
+          break;
+        case 'heal':
+          hero.currentStats.currentHp = min(
+            hero.currentStats.maxHp,
+            hero.currentStats.currentHp + skill.powerRating + 18,
+          );
+          partyPowerDelta += skill.powerRating ~/ 2;
+          break;
+        case 'support':
+          partyPowerDelta += skill.powerRating ~/ 2;
+          rewardDelta += max(4, skill.powerRating ~/ 2);
+          break;
+        case 'cleanse':
+          hero.removeStatusEffect('poisoned');
+          hero.removeStatusEffect('wounded');
+          hero.currentStats.currentHp = min(
+            hero.currentStats.maxHp,
+            hero.currentStats.currentHp + 20,
+          );
+          rewardDelta += skill.powerRating ~/ 3;
+          break;
+        case 'mobility':
+          partyPowerDelta += skill.powerRating ~/ 2;
+          rewardDelta += skill.powerRating ~/ 3;
+          enemyPowerDelta += skill.powerRating ~/ 2;
+          break;
+        case 'recovery':
+          hero.currentStats.currentEng = min(
+            hero.currentStats.maxEng,
+            hero.currentStats.currentEng + 14,
+          );
+          hero.restoreMana(8);
+          enemyPowerDelta += skill.powerRating ~/ 2;
+          break;
+      }
+    } else if (skill == null &&
+        lowMana &&
+        playerData.itemQuantity('mana_potion') > 0) {
+      playerData.consumeItem('mana_potion');
+      hero.restoreMana(50);
+      itemUsed = itemUsed ?? 'Mana Potion';
+      action = 'ดื่ม Mana Potion';
+    }
+
+    if (itemUsed != null && skill == null) {
+      action = 'ใช้$itemUsed';
+    }
+
+    hero.setAction(action, target: target);
+    hero.refreshBodyCondition();
+
+    final descriptor = [
+      hero.name,
+      action,
+      if (skill != null) '(MP ${hero.currentMana}/${hero.maxMana})',
+      if (itemUsed != null) 'พร้อม$itemUsed',
+      'เป้าหมาย $target',
+    ].join(' ');
+
+    return TowerHeroActionEffect(
+      report: _heroReportFromState(
+        hero,
+        skillName: skill?.name,
+        itemUsed: itemUsed,
+      ),
+      partyPowerDelta: partyPowerDelta,
+      enemyPowerDelta: enemyPowerDelta,
+      rewardDelta: rewardDelta,
+      logLine: descriptor,
+    );
+  }
+
+  static TowerHeroActionReport _heroReportFromState(
+    HeroModel hero, {
+    String? skillName,
+    String? itemUsed,
+  }) {
+    return TowerHeroActionReport(
+      heroId: hero.id,
+      heroName: hero.name,
+      action: hero.currentAction ?? 'รอคำสั่ง',
+      target: hero.currentTarget,
+      skillName: skillName,
+      itemUsed: itemUsed,
+      remainingHp: hero.currentStats.currentHp,
+      maxHp: hero.currentStats.maxHp,
+      remainingEng: hero.currentStats.currentEng,
+      maxEng: hero.currentStats.maxEng,
+      remainingMana: hero.currentMana,
+      maxMana: hero.maxMana,
+      bodyCondition: hero.bodyCondition,
+      statusEffects: List<String>.from(hero.statusEffects),
+      cooldowns: Map<String, int>.from(hero.skillCooldowns),
+    );
+  }
+
+  static String _monsterTargetLabel(MonsterProfile monster) {
+    switch (monster.id) {
+      case 'swarm':
+        return 'ฝูงหน้าแนว';
+      case 'brute':
+        return 'ตัวถึกกลางห้อง';
+      case 'sentinel':
+        return 'ผู้เฝ้าประตู';
+      case 'wraith':
+        return 'วิญญาณแกนกลาง';
+      case 'predator':
+        return 'นักล่าด้านข้าง';
+      default:
+        return 'ศัตรูเป้าหมาย';
+    }
+  }
+
   static int _heroEnergyLoss(
     HeroModel hero, {
     required int floor,
@@ -1946,6 +3092,8 @@ class TowerRunService {
     required bool succeeded,
     required double combatShare,
     required String formation,
+    required MonsterProfile monster,
+    required int pressureDelta,
   }) {
     final stats = hero.currentStats;
     final endurance = stats.maxEng + (stats.def * 2) + stats.spd;
@@ -1953,19 +3101,23 @@ class TowerRunService {
     final exhaustionPenalty = stats.maxEng <= 0
         ? 0.0
         : (1 - (stats.currentEng / stats.maxEng)) * 0.18;
-    final base = (10 + (floor * 1.7) + (enemyPower / 140)) *
-        (succeeded ? 0.92 : 1.28);
+    final base =
+        (10 + (floor * 1.7) + (enemyPower / 140)) * (succeeded ? 0.92 : 1.28);
     final contributionFactor = 0.75 + (combatShare * 0.8);
     final formationFactor = _formationEnergyFactor(formation);
     final roleFactor = _roleEnergyFactor(hero.currentClass);
     final equipmentFactor = _heroEquipmentFatigueFactor(hero);
-    final loss = (base *
-            formationFactor *
-            roleFactor *
-            contributionFactor *
-            equipmentFactor *
-            (1.18 - enduranceReduction + exhaustionPenalty))
-        .round();
+    final monsterPressureFactor =
+        1 + ((monster.pressureBias + pressureDelta) / 140);
+    final loss =
+        (base *
+                formationFactor *
+                roleFactor *
+                contributionFactor *
+                equipmentFactor *
+                monsterPressureFactor *
+                (1.18 - enduranceReduction + exhaustionPenalty))
+            .round();
     return loss.clamp(succeeded ? 8 : 12, succeeded ? 42 : 58);
   }
 
@@ -1976,6 +3128,8 @@ class TowerRunService {
     required bool succeeded,
     required double combatShare,
     required String formation,
+    required MonsterProfile monster,
+    required int pressureDelta,
   }) {
     final stats = hero.currentStats;
     final resilience =
@@ -1984,25 +3138,35 @@ class TowerRunService {
     final exhaustionPenalty = stats.maxEng <= 0
         ? 0.0
         : (1 - (stats.currentEng / stats.maxEng)) * 0.22;
-    final base = (7 + (floor * 1.35) + (enemyPower / 180)) *
-        (succeeded ? 0.82 : 1.45);
+    final base =
+        (7 + (floor * 1.35) + (enemyPower / 180)) * (succeeded ? 0.82 : 1.45);
     final contributionFactor = 0.70 + (combatShare * 0.75);
     final formationFactor = _formationHpFactor(formation);
     final roleFactor = _roleHpFactor(hero.currentClass);
     final equipmentFactor = _heroEquipmentFatigueFactor(hero);
-    final loss = (base *
-            formationFactor *
-            roleFactor *
-            contributionFactor *
-            equipmentFactor *
-            (1.20 - mitigation + exhaustionPenalty))
-        .round();
+    final monsterPressureFactor =
+        1 + ((monster.pressureBias + pressureDelta) / 180);
+    final loss =
+        (base *
+                formationFactor *
+                roleFactor *
+                contributionFactor *
+                equipmentFactor *
+                monsterPressureFactor *
+                (1.20 - mitigation + exhaustionPenalty))
+            .round();
     return loss.clamp(succeeded ? 5 : 10, succeeded ? 36 : 60);
   }
 
   static int _fatigueScore(HeroModel hero) {
-    final hpLoss = max(0, hero.currentStats.maxHp - hero.currentStats.currentHp);
-    final engLoss = max(0, hero.currentStats.maxEng - hero.currentStats.currentEng);
+    final hpLoss = max(
+      0,
+      hero.currentStats.maxHp - hero.currentStats.currentHp,
+    );
+    final engLoss = max(
+      0,
+      hero.currentStats.maxEng - hero.currentStats.currentEng,
+    );
     final hpRatio = hero.currentStats.maxHp <= 0
         ? 0
         : (hpLoss * 100) ~/ hero.currentStats.maxHp;
@@ -2021,7 +3185,8 @@ class TowerRunService {
       return Duration.zero;
     }
 
-    final recoveryStat = hero.currentStats.def +
+    final recoveryStat =
+        hero.currentStats.def +
         hero.currentStats.spd +
         (hero.currentStats.maxEng ~/ 5);
     final recoveryFactor =
@@ -2117,7 +3282,8 @@ class TowerRunService {
       case 'swift':
         return party.members.fold<int>(
               0,
-              (sum, hero) => sum + hero.currentStats.spd + hero.currentStats.luk,
+              (sum, hero) =>
+                  sum + hero.currentStats.spd + hero.currentStats.luk,
             ) ~/
             2;
       default:
@@ -2157,18 +3323,243 @@ class TowerRunService {
     return bonus;
   }
 
-  static List<ItemModel> _generateLootRewards(int floor, int rewardModifier) {
+  static MonsterProfile _monsterForFloor(int floor) {
+    switch ((floor - 1) % 5) {
+      case 0:
+        return const MonsterProfile(
+          id: 'swarm',
+          name: 'ฝูงเขมือบ',
+          description: 'ศัตรูจำนวนมากที่กดดันความเหนื่อยของทีม',
+          powerBias: -20,
+          pressureBias: 20,
+          rewardBias: 8,
+          supportBias: -6,
+          lootTheme: 'beast',
+        );
+      case 1:
+        return const MonsterProfile(
+          id: 'brute',
+          name: 'อสูรสายถึก',
+          description: 'ตัวชนหนักที่บีบให้แนวหน้าใช้แรงมากขึ้น',
+          powerBias: 80,
+          pressureBias: 34,
+          rewardBias: 16,
+          supportBias: 0,
+          lootTheme: 'bone',
+        );
+      case 2:
+        return const MonsterProfile(
+          id: 'sentinel',
+          name: 'ผู้เฝ้าหอโลหะ',
+          description: 'หน่วยเกราะแข็งที่ดรอปแร่และอะไหล่ชั้นดี',
+          powerBias: 42,
+          pressureBias: 18,
+          rewardBias: 18,
+          supportBias: -12,
+          lootTheme: 'ore',
+        );
+      case 3:
+        return const MonsterProfile(
+          id: 'wraith',
+          name: 'วิญญาณเร่หอคอย',
+          description: 'ศัตรูประหลาดที่แพ้ทางศรัทธาและรีลิก',
+          powerBias: 54,
+          pressureBias: 24,
+          rewardBias: 24,
+          supportBias: -4,
+          lootTheme: 'relic',
+        );
+      default:
+        return const MonsterProfile(
+          id: 'predator',
+          name: 'นักล่าซุ่มจู่โจม',
+          description: 'ศัตรูว่องไวที่กดจังหวะทีมช้าๆ',
+          powerBias: 18,
+          pressureBias: 28,
+          rewardBias: 14,
+          supportBias: -16,
+          lootTheme: 'hunter',
+        );
+    }
+  }
+
+  static String _monsterFamilyPassiveLabel(MonsterProfile monster) {
+    switch (monster.id) {
+      case 'swarm':
+        return 'ล้อมรุม กดดัน ENG ของทีมหนักขึ้นแต่ทิ้งวัตถุดิบจำนวนมาก';
+      case 'brute':
+        return 'ทุบหนัก แทงก์แนวหน้ารับแรงปะทะสูงแต่รางวัลต่อชั้นดีขึ้น';
+      case 'sentinel':
+        return 'แนวป้องกันแน่น ชั้นนี้ใช้แรงเจาะเกราะมากแต่แร่ดรอปดี';
+      case 'wraith':
+        return 'แรงอาฆาตกดดันทีมและทำให้ศัตรูชั้นนี้อันตรายขึ้น';
+      case 'predator':
+        return 'จู่โจมรวดเร็ว กดจังหวะทีมและทำให้ความเหนื่อยพุ่งไว';
+      default:
+        return 'ไม่มี';
+    }
+  }
+
+  static int _monsterFamilyPowerDelta(MonsterProfile monster) {
+    switch (monster.id) {
+      case 'swarm':
+        return 12;
+      case 'brute':
+        return 34;
+      case 'sentinel':
+        return 26;
+      case 'wraith':
+        return 18;
+      case 'predator':
+        return 20;
+      default:
+        return 0;
+    }
+  }
+
+  static int _monsterFamilyPressureDelta(MonsterProfile monster) {
+    switch (monster.id) {
+      case 'swarm':
+        return 18;
+      case 'brute':
+        return 8;
+      case 'sentinel':
+        return 10;
+      case 'wraith':
+        return 16;
+      case 'predator':
+        return 20;
+      default:
+        return 0;
+    }
+  }
+
+  static int _monsterFamilyRewardDelta(MonsterProfile monster) {
+    switch (monster.id) {
+      case 'swarm':
+        return 8;
+      case 'brute':
+        return 10;
+      case 'sentinel':
+        return 14;
+      case 'wraith':
+        return 16;
+      case 'predator':
+        return 9;
+      default:
+        return 0;
+    }
+  }
+
+  static EliteModifierProfile _eliteModifierForFloor(
+    int floor,
+    int runId,
+    MonsterProfile monster,
+  ) {
+    if (floor < 4 || (floor + runId) % 4 != 0) {
+      return const EliteModifierProfile(
+        id: 'normal',
+        name: 'ปกติ',
+        description: 'ไม่มีตัวแปรพิเศษ',
+        enemyPowerDelta: 0,
+        pressureDelta: 0,
+        rewardDelta: 0,
+        lootRarityBonus: 0,
+      );
+    }
+
+    final variants = <EliteModifierProfile>[
+      const EliteModifierProfile(
+        id: 'armored',
+        name: 'เกราะหนา',
+        description: 'ศัตรูรับมือยากขึ้น แต่รางวัลดีขึ้น',
+        enemyPowerDelta: 60,
+        pressureDelta: 10,
+        rewardDelta: 14,
+        lootRarityBonus: 1,
+      ),
+      const EliteModifierProfile(
+        id: 'frenzied',
+        name: 'คลุ้มคลั่ง',
+        description: 'แรงกดดันสูงและจังหวะต่อสู้รุนแรงขึ้น',
+        enemyPowerDelta: 48,
+        pressureDelta: 18,
+        rewardDelta: 16,
+        lootRarityBonus: 1,
+      ),
+      const EliteModifierProfile(
+        id: 'hoarder',
+        name: 'สะสมทรัพย์',
+        description: 'ศัตรูแบกของล้ำค่าไว้มากกว่าปกติ',
+        enemyPowerDelta: 34,
+        pressureDelta: 8,
+        rewardDelta: 22,
+        lootRarityBonus: 2,
+      ),
+      const EliteModifierProfile(
+        id: 'cursed',
+        name: 'คำสาปหนาแน่น',
+        description: 'ชั้นนี้กดดันทีมหนักขึ้นแต่มีของหายากมากขึ้น',
+        enemyPowerDelta: 56,
+        pressureDelta: 14,
+        rewardDelta: 18,
+        lootRarityBonus: 1,
+      ),
+    ];
+
+    final seed =
+        floor +
+        runId +
+        monster.id.codeUnits.fold<int>(0, (sum, code) => sum + code);
+    return variants[seed % variants.length];
+  }
+
+  static int _monsterMatchupBonus(PartyModel party, MonsterProfile monster) {
+    switch (monster.id) {
+      case 'swarm':
+        return (_countClasses(party, {'vanguard', 'warbringer', 'saint'}) *
+                10) +
+            (party.formation == 'swift' ? 8 : 0);
+      case 'brute':
+        return (_countClasses(party, {'knight', 'warden', 'oracle'}) * 12) +
+            (party.formation == 'bulwark' ? 10 : 0);
+      case 'sentinel':
+        return (_countClasses(party, {'warbringer', 'ranger'}) * 11) +
+            (_countEquippedItems(party, {'steel_blade'}) * 8);
+      case 'wraith':
+        return (_countClasses(party, {'acolyte', 'oracle', 'saint'}) * 12) +
+            (_countEquippedItems(party, {'saints_emblem', 'sanctum_lantern'}) *
+                10);
+      case 'predator':
+        return (_countClasses(party, {'shadowblade', 'ranger', 'skirmisher'}) *
+                10) +
+            (party.formation == 'swift' ? 12 : 0);
+      default:
+        return 0;
+    }
+  }
+
+  static List<ItemModel> _generateLootRewards(
+    int floor,
+    int rewardModifier,
+    MonsterProfile monster, {
+    EliteModifierProfile? eliteModifier,
+  }) {
     final rewards = <ItemModel>[];
-    final adjustedFloor = floor + max(0, rewardModifier ~/ 30);
+    final eliteLootBonus = eliteModifier?.lootRarityBonus ?? 0;
+    final adjustedFloor =
+        floor + max(0, rewardModifier ~/ 30) + (eliteLootBonus * 2);
     final rarity = adjustedFloor >= 15
         ? 4
         : adjustedFloor >= 8
-            ? 3
-            : adjustedFloor >= 4
-                ? 2
-                : 1;
+        ? 3
+        : adjustedFloor >= 4
+        ? 2
+        : 1;
 
-    rewards.add(_itemReward('tower_ore_$rarity', quantity: 1 + _random.nextInt(2)));
+    rewards.add(
+      _itemReward('tower_ore_$rarity', quantity: 1 + _random.nextInt(2)),
+    );
 
     final commonMaterials = <ItemModel>[
       _itemReward('cloth_scrap', quantity: 1 + _random.nextInt(2)),
@@ -2177,6 +3568,36 @@ class TowerRunService {
       _itemReward('beast_meat', quantity: 1 + _random.nextInt(3)),
     ];
     rewards.add(commonMaterials[_random.nextInt(commonMaterials.length)]);
+
+    switch (monster.lootTheme) {
+      case 'beast':
+        rewards.add(
+          _itemReward('beast_meat', quantity: 1 + _random.nextInt(2)),
+        );
+        break;
+      case 'bone':
+        rewards.add(
+          _itemReward('monster_bone', quantity: 1 + _random.nextInt(2)),
+        );
+        break;
+      case 'ore':
+        rewards.add(
+          _itemReward('iron_shard', quantity: 1 + _random.nextInt(2)),
+        );
+        break;
+      case 'relic':
+        rewards.add(
+          _random.nextBool()
+              ? _itemReward('relic_shard')
+              : _itemReward('shrine_relic'),
+        );
+        break;
+      case 'hunter':
+        rewards.add(
+          _itemReward('cloth_scrap', quantity: 1 + _random.nextInt(2)),
+        );
+        break;
+    }
 
     if (_random.nextDouble() > 0.55) {
       rewards.add(_itemReward('ration_pack'));
@@ -2236,6 +3657,13 @@ class TowerRunService {
         _itemReward('sanctum_lantern'),
       ];
       rewards.add(relicRewards[_random.nextInt(relicRewards.length)]);
+    }
+
+    if ((eliteModifier?.isElite ?? false) && _random.nextDouble() > 0.4) {
+      rewards.add(_itemReward('tower_ore_${min(4, rarity + eliteLootBonus)}'));
+    }
+    if (eliteLootBonus >= 2 && _random.nextDouble() > 0.55) {
+      rewards.add(_itemReward('relic_shard'));
     }
 
     return rewards;

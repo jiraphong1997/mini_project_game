@@ -32,6 +32,14 @@ class HeroModel {
   List<String> completedClassQuestIds;
   Map<String, String> equippedItemIds;
   Map<String, HeroStats> equippedItemBonuses;
+  Map<String, int> equipmentUpgradeLevels;
+  int maxMana;
+  int currentMana;
+  String bodyCondition;
+  List<String> statusEffects;
+  Map<String, int> skillCooldowns;
+  String? currentAction;
+  String? currentTarget;
   int? recoveryReadyAtEpochMs;
 
   HeroModel({
@@ -59,23 +67,44 @@ class HeroModel {
     List<String>? completedClassQuestIds,
     Map<String, String>? equippedItemIds,
     Map<String, HeroStats>? equippedItemBonuses,
+    Map<String, int>? equipmentUpgradeLevels,
+    int? maxMana,
+    int? currentMana,
+    String? bodyCondition,
+    List<String>? statusEffects,
+    Map<String, int>? skillCooldowns,
+    this.currentAction,
+    this.currentTarget,
     this.recoveryReadyAtEpochMs,
-  })  : currentStats = currentStats ?? baseStats.clone(),
-        classBonusStats = classBonusStats?.clone() ?? HeroStats.zero(),
-        currentClass = currentClass ?? 'novice',
-        unlockedClasses = List<String>.from(
-          unlockedClasses ?? [currentClass ?? 'novice'],
-        ),
-        activeClassQuestIds = List<String>.from(activeClassQuestIds ?? const []),
-        completedClassQuestIds = List<String>.from(
-          completedClassQuestIds ?? const [],
-        ),
-        equippedItemIds = Map<String, String>.from(equippedItemIds ?? const {}),
-        equippedItemBonuses = Map<String, HeroStats>.fromEntries(
-          (equippedItemBonuses ?? const {}).entries.map(
-            (entry) => MapEntry(entry.key, entry.value.clone()),
-          ),
-        ) {
+  }) : currentStats = currentStats ?? baseStats.clone(),
+       classBonusStats = classBonusStats?.clone() ?? HeroStats.zero(),
+       currentClass = currentClass ?? 'novice',
+       unlockedClasses = List<String>.from(
+         unlockedClasses ?? [currentClass ?? 'novice'],
+       ),
+       activeClassQuestIds = List<String>.from(activeClassQuestIds ?? const []),
+       completedClassQuestIds = List<String>.from(
+         completedClassQuestIds ?? const [],
+       ),
+       equippedItemIds = Map<String, String>.from(equippedItemIds ?? const {}),
+       equippedItemBonuses = Map<String, HeroStats>.fromEntries(
+         (equippedItemBonuses ?? const {}).entries.map(
+           (entry) => MapEntry(entry.key, entry.value.clone()),
+         ),
+       ),
+       equipmentUpgradeLevels = Map<String, int>.from(
+         equipmentUpgradeLevels ?? const {},
+       ),
+       maxMana =
+           maxMana ??
+           _defaultMaxMana(baseStats, level, currentClass ?? 'novice'),
+       currentMana =
+           currentMana ??
+           (maxMana ??
+               _defaultMaxMana(baseStats, level, currentClass ?? 'novice')),
+       bodyCondition = bodyCondition ?? 'healthy',
+       statusEffects = List<String>.from(statusEffects ?? const []),
+       skillCooldowns = Map<String, int>.from(skillCooldowns ?? const {}) {
     if (!this.unlockedClasses.contains(this.currentClass)) {
       this.unlockedClasses.add(this.currentClass);
     }
@@ -146,6 +175,9 @@ class HeroModel {
   }
 
   bool get isRecovering => recoveryCooldownRemaining > Duration.zero;
+  bool get isPoisoned => statusEffects.contains('poisoned');
+  bool get isExhausted => statusEffects.contains('exhausted');
+  bool get isWounded => statusEffects.contains('wounded');
 
   int expToNextLevel() => LevelingPolicy.expRequiredForNextLevel(level);
 
@@ -177,6 +209,11 @@ class HeroModel {
   void fullyRecover() {
     currentStats.currentHp = currentStats.maxHp;
     currentStats.currentEng = currentStats.maxEng;
+    currentMana = maxMana;
+    statusEffects = statusEffects
+        .where((effect) => effect != 'exhausted' && effect != 'wounded')
+        .toList();
+    bodyCondition = 'healthy';
     recoveryReadyAtEpochMs = null;
   }
 
@@ -185,9 +222,71 @@ class HeroModel {
     classBonusStats = nextBonus.clone();
     _applyClassBonus(classBonusStats, direction: 1);
     currentClass = nextClass;
+    maxMana = _defaultMaxMana(currentStats, level, nextClass);
+    currentMana = min(currentMana, maxMana);
     if (!unlockedClasses.contains(nextClass)) {
       unlockedClasses = [...unlockedClasses, nextClass];
     }
+  }
+
+  void restoreMana(int amount) {
+    currentMana = (currentMana + amount).clamp(0, maxMana);
+  }
+
+  bool spendMana(int amount) {
+    if (currentMana < amount) {
+      return false;
+    }
+    currentMana -= amount;
+    return true;
+  }
+
+  void tickSkillCooldowns() {
+    final next = <String, int>{};
+    for (final entry in skillCooldowns.entries) {
+      final value = entry.value - 1;
+      if (value > 0) {
+        next[entry.key] = value;
+      }
+    }
+    skillCooldowns = next;
+  }
+
+  int skillCooldownFor(String skillId) => skillCooldowns[skillId] ?? 0;
+
+  void setSkillCooldown(String skillId, int turns) {
+    if (turns <= 0) {
+      skillCooldowns = Map<String, int>.from(skillCooldowns)..remove(skillId);
+      return;
+    }
+    skillCooldowns = {...skillCooldowns, skillId: turns};
+  }
+
+  void addStatusEffect(String effect) {
+    if (statusEffects.contains(effect)) {
+      return;
+    }
+    statusEffects = [...statusEffects, effect];
+    _refreshBodyCondition();
+  }
+
+  void removeStatusEffect(String effect) {
+    statusEffects = statusEffects.where((value) => value != effect).toList();
+    _refreshBodyCondition();
+  }
+
+  void setAction(String action, {String? target}) {
+    currentAction = action;
+    currentTarget = target;
+  }
+
+  void clearAction() {
+    currentAction = null;
+    currentTarget = null;
+  }
+
+  void refreshBodyCondition() {
+    _refreshBodyCondition();
   }
 
   void startClassQuest(String questId) {
@@ -223,15 +322,38 @@ class HeroModel {
       _applyClassBonus(existingBonus, direction: -1);
     }
 
-    equippedItemIds = {
-      ...equippedItemIds,
-      slot.name: item.id,
-    };
+    equippedItemIds = {...equippedItemIds, slot.name: item.id};
+    equippedItemBonuses = {...equippedItemBonuses, slot.name: bonus.clone()};
+    equipmentUpgradeLevels = {...equipmentUpgradeLevels, slot.name: 0};
+    _applyClassBonus(bonus, direction: 1);
+  }
+
+  int equipmentUpgradeLevelForSlot(EquipmentSlot slot) {
+    return equipmentUpgradeLevels[slot.name] ?? 0;
+  }
+
+  void reforgeEquippedItem(
+    EquipmentSlot slot,
+    HeroStats nextBonus, {
+    int? upgradeLevel,
+  }) {
+    final existingBonus = equippedItemBonuses[slot.name];
+    if (existingBonus == null) {
+      return;
+    }
+
+    _applyClassBonus(existingBonus, direction: -1);
     equippedItemBonuses = {
       ...equippedItemBonuses,
-      slot.name: bonus.clone(),
+      slot.name: nextBonus.clone(),
     };
-    _applyClassBonus(bonus, direction: 1);
+    if (upgradeLevel != null) {
+      equipmentUpgradeLevels = {
+        ...equipmentUpgradeLevels,
+        slot.name: upgradeLevel,
+      };
+    }
+    _applyClassBonus(nextBonus, direction: 1);
   }
 
   void unequipSlot(EquipmentSlot slot) {
@@ -245,8 +367,11 @@ class HeroModel {
       ..remove(slot.name);
     final nextBonuses = Map<String, HeroStats>.from(equippedItemBonuses)
       ..remove(slot.name);
+    final nextUpgradeLevels = Map<String, int>.from(equipmentUpgradeLevels)
+      ..remove(slot.name);
     equippedItemIds = nextIds;
     equippedItemBonuses = nextBonuses;
+    equipmentUpgradeLevels = nextUpgradeLevels;
   }
 
   @override
@@ -295,6 +420,14 @@ class HeroModel {
     currentStats.def += defGain;
     currentStats.spd += spdGain;
     currentStats.luk += lukGain;
+    maxMana +=
+        2 +
+        (currentClass == 'acolyte' ||
+                currentClass == 'oracle' ||
+                currentClass == 'saint'
+            ? 1
+            : 0);
+    currentMana = min(maxMana, currentMana + 3);
   }
 
   void adjustBond(int delta) {
@@ -303,6 +436,49 @@ class HeroModel {
 
   void adjustFaith(int delta) {
     faith = (faith + delta).clamp(0, 100);
+  }
+
+  void _refreshBodyCondition() {
+    final hpRatio = currentStats.maxHp <= 0
+        ? 1.0
+        : currentStats.currentHp / currentStats.maxHp;
+    final engRatio = currentStats.maxEng <= 0
+        ? 1.0
+        : currentStats.currentEng / currentStats.maxEng;
+
+    if (statusEffects.contains('poisoned')) {
+      bodyCondition = 'poisoned';
+      return;
+    }
+    if (hpRatio < 0.35) {
+      bodyCondition = 'critical';
+      if (!statusEffects.contains('wounded')) {
+        statusEffects = [...statusEffects, 'wounded'];
+      }
+      return;
+    }
+    if (engRatio < 0.25) {
+      bodyCondition = 'exhausted';
+      if (!statusEffects.contains('exhausted')) {
+        statusEffects = [...statusEffects, 'exhausted'];
+      }
+      return;
+    }
+
+    statusEffects = statusEffects
+        .where((effect) => effect != 'wounded' && effect != 'exhausted')
+        .toList();
+    bodyCondition = hpRatio < 0.65 ? 'strained' : 'healthy';
+  }
+
+  static int _defaultMaxMana(HeroStats stats, int level, String classId) {
+    var mana = 18 + (level * 2) + (stats.maxEng ~/ 6) + (stats.luk ~/ 2);
+    if (classId == 'acolyte' || classId == 'oracle' || classId == 'saint') {
+      mana += 18;
+    } else if (classId == 'shadowblade' || classId == 'ranger') {
+      mana += 6;
+    }
+    return max(12, mana);
   }
 
   void _applyClassBonus(HeroStats bonus, {required int direction}) {
@@ -319,12 +495,18 @@ class HeroModel {
     baseStats.spd = max(1, baseStats.spd + (bonus.spd * direction));
     currentStats.spd = max(1, currentStats.spd + (bonus.spd * direction));
     baseStats.maxEng = max(1, baseStats.maxEng + (bonus.maxEng * direction));
-    currentStats.maxEng = max(1, currentStats.maxEng + (bonus.maxEng * direction));
+    currentStats.maxEng = max(
+      1,
+      currentStats.maxEng + (bonus.maxEng * direction),
+    );
     baseStats.luk = max(0, baseStats.luk + (bonus.luk * direction));
     currentStats.luk = max(0, currentStats.luk + (bonus.luk * direction));
 
     if (direction > 0) {
-      baseStats.currentHp = min(baseStats.maxHp, baseStats.currentHp + bonus.maxHp);
+      baseStats.currentHp = min(
+        baseStats.maxHp,
+        baseStats.currentHp + bonus.maxHp,
+      );
       currentStats.currentHp = min(
         currentStats.maxHp,
         currentStats.currentHp + bonus.maxHp,
@@ -341,7 +523,10 @@ class HeroModel {
       baseStats.currentHp = min(baseStats.currentHp, baseStats.maxHp);
       currentStats.currentHp = min(currentStats.currentHp, currentStats.maxHp);
       baseStats.currentEng = min(baseStats.currentEng, baseStats.maxEng);
-      currentStats.currentEng = min(currentStats.currentEng, currentStats.maxEng);
+      currentStats.currentEng = min(
+        currentStats.currentEng,
+        currentStats.maxEng,
+      );
     }
   }
 
@@ -373,6 +558,14 @@ class HeroModel {
       'equippedItemBonuses': equippedItemBonuses.map(
         (key, value) => MapEntry(key, value.toMap()),
       ),
+      'equipmentUpgradeLevels': equipmentUpgradeLevels,
+      'maxMana': maxMana,
+      'currentMana': currentMana,
+      'bodyCondition': bodyCondition,
+      'statusEffects': statusEffects,
+      'skillCooldowns': skillCooldowns,
+      'currentAction': currentAction,
+      'currentTarget': currentTarget,
       'recoveryReadyAtEpochMs': recoveryReadyAtEpochMs,
     };
   }
@@ -410,12 +603,14 @@ class HeroModel {
       bond: map['bond'] as int? ?? 20,
       faith: map['faith'] as int? ?? 20,
       currentClass: map['currentClass'] as String? ?? 'novice',
-      unlockedClasses: (map['unlockedClasses'] as List<dynamic>? ?? const ['novice'])
-          .map((value) => value.toString())
-          .toList(),
-      activeClassQuestIds: (map['activeClassQuestIds'] as List<dynamic>? ?? const [])
-          .map((value) => value.toString())
-          .toList(),
+      unlockedClasses:
+          (map['unlockedClasses'] as List<dynamic>? ?? const ['novice'])
+              .map((value) => value.toString())
+              .toList(),
+      activeClassQuestIds:
+          (map['activeClassQuestIds'] as List<dynamic>? ?? const [])
+              .map((value) => value.toString())
+              .toList(),
       completedClassQuestIds:
           (map['completedClassQuestIds'] as List<dynamic>? ?? const [])
               .map((value) => value.toString())
@@ -433,6 +628,24 @@ class HeroModel {
               HeroStats.fromMap(Map<String, dynamic>.from(value as Map)),
             ),
           ),
+      equipmentUpgradeLevels: Map<String, int>.from(
+        ((map['equipmentUpgradeLevels'] as Map?) ?? const {}).map(
+          (key, value) => MapEntry(key.toString(), value as int),
+        ),
+      ),
+      maxMana: map['maxMana'] as int?,
+      currentMana: map['currentMana'] as int?,
+      bodyCondition: map['bodyCondition'] as String?,
+      statusEffects: (map['statusEffects'] as List<dynamic>? ?? const [])
+          .map((value) => value.toString())
+          .toList(),
+      skillCooldowns: Map<String, int>.from(
+        ((map['skillCooldowns'] as Map?) ?? const {}).map(
+          (key, value) => MapEntry(key.toString(), value as int),
+        ),
+      ),
+      currentAction: map['currentAction'] as String?,
+      currentTarget: map['currentTarget'] as String?,
       recoveryReadyAtEpochMs: map['recoveryReadyAtEpochMs'] as int?,
     );
   }

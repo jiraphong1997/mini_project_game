@@ -6,7 +6,9 @@ import '../models/hero_model.dart';
 import '../models/player_data.dart';
 import '../services/class_progression_service.dart';
 import '../services/class_quest_service.dart';
+import '../services/item_usage_service.dart';
 import '../services/player_storage_service.dart';
+import 'ai_settings_screen.dart';
 import 'class_quest_board_screen.dart';
 import 'debug_hero_screen.dart';
 import 'gacha_screen.dart';
@@ -101,6 +103,12 @@ class _MainDashboardState extends State<MainDashboard> {
       playerName: 'ผู้เล่นใหม่',
       silver: 2500,
       gold: 500,
+      inventory: [
+        ItemUsageService.definitionFor(
+          'tower_warp_stone',
+        )!.toItemModel(quantity: 3),
+        ItemUsageService.definitionFor('ration_pack')!.toItemModel(quantity: 2),
+      ],
     );
   }
 
@@ -135,6 +143,26 @@ class _MainDashboardState extends State<MainDashboard> {
           playerData: playerData,
           onDataChanged: _onDataChanged,
           onOpenHero: _openHeroDetail,
+        ),
+      ),
+    );
+  }
+
+  void _openAiSettings() {
+    final playerData = _playerData;
+    if (playerData == null) {
+      return;
+    }
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => AiSettingsScreen(
+          initialSettings: playerData.aiSettings,
+          onSaved: (settings) {
+            playerData.aiSettings = settings;
+            _onDataChanged();
+          },
         ),
       ),
     );
@@ -189,9 +217,7 @@ class _MainDashboardState extends State<MainDashboard> {
   @override
   Widget build(BuildContext context) {
     if (_isLoading || _playerData == null) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
     final playerData = _playerData!;
@@ -221,7 +247,10 @@ class _MainDashboardState extends State<MainDashboard> {
                 onPressed: () => setState(() => _currentIndex = 0),
                 icon: const Icon(Icons.arrow_back),
               ),
-        title: Text(_pageTitle, style: const TextStyle(fontWeight: FontWeight.bold)),
+        title: Text(
+          _pageTitle,
+          style: const TextStyle(fontWeight: FontWeight.bold),
+        ),
         backgroundColor: Colors.indigo,
         foregroundColor: Colors.white,
         actions: [
@@ -237,11 +266,19 @@ class _MainDashboardState extends State<MainDashboard> {
           ),
           PopupMenuButton<String>(
             onSelected: (value) {
+              if (value == 'ai_settings') {
+                _openAiSettings();
+                return;
+              }
               if (value == 'reset') {
                 _resetProgress();
               }
             },
             itemBuilder: (context) => const [
+              PopupMenuItem<String>(
+                value: 'ai_settings',
+                child: Text('ตั้งค่า AI / Ollama'),
+              ),
               PopupMenuItem<String>(
                 value: 'reset',
                 child: Text('ล้างข้อมูลเซฟ'),
@@ -259,9 +296,18 @@ class _MainDashboardState extends State<MainDashboard> {
             icon: Icon(Icons.dashboard_customize),
             label: 'Status',
           ),
-          BottomNavigationBarItem(icon: Icon(Icons.inventory), label: 'คลังฮีโร่'),
-          BottomNavigationBarItem(icon: Icon(Icons.star), label: 'สุ่มฮีโร่ (Gacha)'),
-          BottomNavigationBarItem(icon: Icon(Icons.stairs_outlined), label: 'Tower'),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.inventory),
+            label: 'คลังฮีโร่',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.star),
+            label: 'สุ่มฮีโร่ (Gacha)',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.stairs_outlined),
+            label: 'Tower',
+          ),
           BottomNavigationBarItem(icon: Icon(Icons.store), label: 'ร้านค้า'),
         ],
       ),
@@ -272,15 +318,17 @@ class _MainDashboardState extends State<MainDashboard> {
     final heroes = playerData.allHeroes;
     final aliveHeroes = heroes.where((hero) => hero.isAlive).length;
     final recoveringHeroes = heroes.where((hero) => hero.isRecovering).length;
-    final heroesWithActiveQuests =
-        heroes.where((hero) => hero.activeClassQuestIds.isNotEmpty).length;
+    final heroesWithActiveQuests = heroes
+        .where((hero) => hero.activeClassQuestIds.isNotEmpty)
+        .length;
     final equippedSlots = heroes.fold<int>(
       0,
       (sum, hero) => sum + hero.equippedItemIds.length,
     );
     final averageLevel = heroes.isEmpty
         ? 0
-        : heroes.map((hero) => hero.level).reduce((a, b) => a + b) ~/ heroes.length;
+        : heroes.map((hero) => hero.level).reduce((a, b) => a + b) ~/
+              heroes.length;
     final highestLevel = heroes.isEmpty
         ? 0
         : heroes.map((hero) => hero.level).reduce((a, b) => a > b ? a : b);
@@ -358,6 +406,21 @@ class _MainDashboardState extends State<MainDashboard> {
             child: Text(
               _isSaving ? 'กำลังบันทึกข้อมูล...' : 'ข้อมูลถูกบันทึกอัตโนมัติ',
               style: TextStyle(color: Colors.grey[700], fontSize: 12),
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Card(
+          child: ListTile(
+            leading: const Icon(Icons.psychology_alt_outlined),
+            title: const Text(
+              'AI Assistant',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            subtitle: Text(playerData.aiSettings.summaryLabel),
+            trailing: OutlinedButton(
+              onPressed: _openAiSettings,
+              child: const Text('ตั้งค่า'),
             ),
           ),
         ),
@@ -538,23 +601,24 @@ class _MainDashboardState extends State<MainDashboard> {
                       .where((hero) => hero.activeClassQuestIds.isNotEmpty)
                       .take(4)
                       .map((hero) {
-                    final questId = hero.activeClassQuestIds.first;
-                    final quest = ClassQuestService.definitionFor(questId);
-                    final objectives = quest.objectives(hero);
-                    final doneCount =
-                        objectives.where((objective) => objective.isComplete).length;
-                    return ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: Text(hero.name),
-                      subtitle: Text(
-                        '${quest.title} • ${doneCount}/${objectives.length} objectives',
-                      ),
-                      trailing: TextButton(
-                        onPressed: () => _openHeroDetail(hero),
-                        child: const Text('ดู'),
-                      ),
-                    );
-                  }),
+                        final questId = hero.activeClassQuestIds.first;
+                        final quest = ClassQuestService.definitionFor(questId);
+                        final objectives = quest.objectives(hero);
+                        final doneCount = objectives
+                            .where((objective) => objective.isComplete)
+                            .length;
+                        return ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          title: Text(hero.name),
+                          subtitle: Text(
+                            '${quest.title} • ${doneCount}/${objectives.length} objectives',
+                          ),
+                          trailing: TextButton(
+                            onPressed: () => _openHeroDetail(hero),
+                            child: const Text('ดู'),
+                          ),
+                        );
+                      }),
               ],
             ),
           ),
@@ -579,7 +643,10 @@ class _MainDashboardState extends State<MainDashboard> {
                     runSpacing: 8,
                     children: playerData.inventory.take(8).map((item) {
                       return Chip(
-                        avatar: const Icon(Icons.inventory_2_outlined, size: 18),
+                        avatar: const Icon(
+                          Icons.inventory_2_outlined,
+                          size: 18,
+                        ),
                         label: Text('${item.name} x${item.quantity}'),
                       );
                     }).toList(),
@@ -622,7 +689,11 @@ class _MainDashboardState extends State<MainDashboard> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(Icons.inventory_2_outlined, size: 72, color: Colors.indigo),
+              const Icon(
+                Icons.inventory_2_outlined,
+                size: 72,
+                color: Colors.indigo,
+              ),
               const SizedBox(height: 16),
               const Text(
                 'คุณยังไม่มีฮีโร่',
@@ -674,7 +745,9 @@ class _MainDashboardState extends State<MainDashboard> {
                         vertical: 4,
                       ),
                       decoration: BoxDecoration(
-                        color: _rarityColor(hero.rarity).withValues(alpha: 0.12),
+                        color: _rarityColor(
+                          hero.rarity,
+                        ).withValues(alpha: 0.12),
                         borderRadius: BorderRadius.circular(999),
                       ),
                       child: Text(
@@ -754,7 +827,10 @@ class _MainDashboardState extends State<MainDashboard> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(label, style: const TextStyle(color: Colors.white70, fontSize: 12)),
+                Text(
+                  label,
+                  style: const TextStyle(color: Colors.white70, fontSize: 12),
+                ),
                 Text(
                   value,
                   style: const TextStyle(
@@ -791,7 +867,10 @@ class _MainDashboardState extends State<MainDashboard> {
               const SizedBox(height: 4),
               Text(
                 value,
-                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ],
           ),

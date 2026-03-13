@@ -1,3 +1,4 @@
+import 'package:mini_project_game/models/agent_ai_settings.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mini_project_game/models/hero_model.dart';
 import 'package:mini_project_game/models/hero_stats.dart';
@@ -29,6 +30,7 @@ void main() {
       completedClassQuestIds: const ['warpath'],
       equippedItemIds: const {'weapon': 'steel_blade'},
       equippedItemBonuses: const {},
+      equipmentUpgradeLevels: const {'weapon': 2},
       recoveryReadyAtEpochMs: 123456789,
     );
 
@@ -46,10 +48,20 @@ void main() {
       gold: 200,
       baseBuildingLevel: 2,
       highestTowerFloor: 7,
+      currentTowerRunId: 3,
       pendingMajorChainEventId: 'pilgrim_rest',
       pendingMajorChainEventIds: const ['pilgrim_rest', 'secret_bazaar'],
       resolvedMajorChainEventIds: const ['hidden_camp'],
       lastTowerSummary: 'ชนะชั้น 7',
+      eventMarketStock: const {'3:secret_bazaar:steel_blade': 1},
+      eventMarketRerollCounts: const {'3:living_forge:reroll': 2},
+      aiSettings: const AgentAiSettings(
+        provider: AgentAiProvider.ollama,
+        ollamaBaseUrl: 'http://127.0.0.1:11434',
+        ollamaModel: 'qwen2.5:3b',
+        requestTimeoutSeconds: 15,
+        temperature: 0.5,
+      ),
       savedParties: [party],
       allHeroes: [hero],
       inventory: [
@@ -75,6 +87,7 @@ void main() {
 
     expect(restored.playerName, 'Tester');
     expect(restored.highestTowerFloor, 7);
+    expect(restored.currentTowerRunId, 3);
     expect(restored.lastTowerSummary, 'ชนะชั้น 7');
     expect(restored.allHeroes, hasLength(1));
     expect(restored.savedParties, hasLength(1));
@@ -87,14 +100,29 @@ void main() {
     expect(restored.allHeroes.first.totalItemsUsed, 2);
     expect(restored.allHeroes.first.currentClass, 'vanguard');
     expect(restored.allHeroes.first.unlockedClasses, contains('vanguard'));
-    expect(restored.allHeroes.first.activeClassQuestIds, contains('steel_resolve'));
-    expect(restored.allHeroes.first.completedClassQuestIds, contains('warpath'));
+    expect(
+      restored.allHeroes.first.activeClassQuestIds,
+      contains('steel_resolve'),
+    );
+    expect(
+      restored.allHeroes.first.completedClassQuestIds,
+      contains('warpath'),
+    );
     expect(restored.allHeroes.first.equippedItemIds['weapon'], 'steel_blade');
+    expect(restored.allHeroes.first.equipmentUpgradeLevels['weapon'], 2);
     expect(restored.allHeroes.first.recoveryReadyAtEpochMs, 123456789);
     expect(restored.pendingMajorChainEventId, 'pilgrim_rest');
-    expect(restored.pendingMajorChainEventIds, ['pilgrim_rest', 'secret_bazaar']);
+    expect(restored.pendingMajorChainEventIds, [
+      'pilgrim_rest',
+      'secret_bazaar',
+    ]);
     expect(restored.resolvedMajorChainEventIds, contains('hidden_camp'));
+    expect(restored.eventStockFor('3:secret_bazaar:steel_blade'), 1);
+    expect(restored.eventRerollCountFor('3:living_forge:reroll'), 2);
     expect(restored.inventory.last.equipmentSlot, EquipmentSlot.armor);
+    expect(restored.aiSettings.provider, AgentAiProvider.ollama);
+    expect(restored.aiSettings.ollamaModel, 'qwen2.5:3b');
+    expect(restored.aiSettings.requestTimeoutSeconds, 15);
   });
 
   test('PlayerData should consume stackable items', () {

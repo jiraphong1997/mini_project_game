@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:flutter/material.dart';
 
@@ -6,6 +7,7 @@ import '../models/hero_model.dart';
 import '../models/item_model.dart';
 import '../models/party_model.dart';
 import '../models/player_data.dart';
+import '../services/agent_ai_service.dart';
 import '../services/class_progression_service.dart';
 import '../services/tower_run_service.dart';
 
@@ -46,16 +48,19 @@ class _TowerScreenState extends State<TowerScreen> {
   int _sessionSilver = 0;
   int _sessionGold = 0;
   int _sessionExp = 0;
+  int _selectedEntryFloor = 1;
   List<ItemModel> _sessionItems = [];
   final List<String> _liveLog = [];
   TowerFloorOutcome? _lastFloorOutcome;
   TowerDecisionEvent? _pendingDecision;
   String? _adviceMessage;
+  bool _isAdviceLoading = false;
 
   @override
   void initState() {
     super.initState();
     _selectedHeroIds = {..._currentParty.memberIds};
+    _selectedEntryFloor = max(1, widget.playerData.highestTowerFloor + 1);
     _startRecoveryTicker();
   }
 
@@ -86,6 +91,16 @@ class _TowerScreenState extends State<TowerScreen> {
   List<HeroModel> get _availableHeroes =>
       widget.playerData.allHeroes.where((hero) => hero.isAlive).toList();
 
+  List<int> get _entryFloorOptions {
+    final highestSelectable = max(1, widget.playerData.highestTowerFloor + 1);
+    return List<int>.generate(highestSelectable, (index) => index + 1);
+  }
+
+  int get _warpStoneCount =>
+      widget.playerData.itemQuantity(TowerRunService.towerWarpStoneItemId);
+
+  int get _entryFee => TowerRunService.entryFeeForFloor(_selectedEntryFloor);
+
   bool get _partyNeedsRecovery =>
       _currentParty.members.any((hero) => hero.isRecovering);
 
@@ -99,7 +114,8 @@ class _TowerScreenState extends State<TowerScreen> {
     return remaining;
   }
 
-  int get _rationCount => widget.playerData.itemQuantity(TowerRunService.recoveryItemId);
+  int get _rationCount =>
+      widget.playerData.itemQuantity(TowerRunService.recoveryItemId);
 
   void _startRecoveryTicker() {
     _recoveryTicker?.cancel();
@@ -134,9 +150,9 @@ class _TowerScreenState extends State<TowerScreen> {
   }
 
   void _showSnackBar(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   void _toggleHero(String heroId, bool selected) {
@@ -157,8 +173,10 @@ class _TowerScreenState extends State<TowerScreen> {
         if (a.isRecovering != b.isRecovering) {
           return a.isRecovering ? 1 : -1;
         }
-        final left = a.currentStats.atk + a.currentStats.def + a.currentStats.spd;
-        final right = b.currentStats.atk + b.currentStats.def + b.currentStats.spd;
+        final left =
+            a.currentStats.atk + a.currentStats.def + a.currentStats.spd;
+        final right =
+            b.currentStats.atk + b.currentStats.def + b.currentStats.spd;
         return right.compareTo(left);
       });
 
@@ -204,11 +222,34 @@ class _TowerScreenState extends State<TowerScreen> {
       return;
     }
 
+    if (!TowerRunService.canEnterTower(
+      widget.playerData,
+      _selectedEntryFloor,
+    )) {
+      _showSnackBar(
+        'ต้องใช้ Tower Warp Stone 1 ก้อน และจ่าย $_entryFee Silver เพื่อเข้าชั้น $_selectedEntryFloor',
+      );
+      return;
+    }
+
+    if (!TowerRunService.consumeTowerEntryCost(
+      widget.playerData,
+      _selectedEntryFloor,
+    )) {
+      _showSnackBar('ค่าเข้าหอหรือหินวาปไม่พอ');
+      return;
+    }
+
+    TowerRunService.preparePartyForExpedition(_currentParty);
+
     _runTimer?.cancel();
 
     setState(() {
       _isRunActive = true;
-      _currentFloor = widget.playerData.highestTowerFloor + 1;
+      widget.playerData.currentTowerRunId += 1;
+      widget.playerData.eventMarketStock = {};
+      widget.playerData.eventMarketRerollCounts = {};
+      _currentFloor = _selectedEntryFloor;
       _floorsProcessed = 0;
       _remainingAdvice = TowerRunService.adviceChargesForParty(_currentParty);
       _nextEnemyModifier = 0;
@@ -221,7 +262,14 @@ class _TowerScreenState extends State<TowerScreen> {
       _lastFloorOutcome = null;
       _pendingDecision = null;
       _adviceMessage = null;
+      _isAdviceLoading = false;
       _currentParty.status = 'tower_climbing';
+      _liveLog.add(
+        'เข้าสำรวจหอที่ชั้น $_currentFloor ใช้ Tower Warp Stone 1 ก้อน และจ่ายค่าเข้าหอ $_entryFee Silver',
+      );
+      _liveLog.add(
+        'ของเตรียมถูกล็อกแล้ว จะซื้อของเพิ่มได้เฉพาะเมื่อเจอจุดพักหรือเหตุการณ์พิเศษ',
+      );
       _liveLog.add('เริ่มสำรวจหอคอยที่ชั้น $_currentFloor');
     });
     widget.onDataChanged();
@@ -244,6 +292,7 @@ class _TowerScreenState extends State<TowerScreen> {
     final majorEvent = TowerRunService.maybeCreateMajorEvent(
       playerData: widget.playerData,
       floor: _currentFloor,
+      party: _currentParty,
     );
     if (majorEvent != null) {
       _runTimer?.cancel();
@@ -287,18 +336,29 @@ class _TowerScreenState extends State<TowerScreen> {
     }
   }
 
-  void _askForAdvice() {
+  Future<void> _askForAdvice() async {
     final event = _pendingDecision;
-    if (event == null || _remainingAdvice <= 0) {
+    if (event == null || _remainingAdvice <= 0 || _isAdviceLoading) {
       return;
     }
 
     setState(() {
       _remainingAdvice -= 1;
-      _adviceMessage = TowerRunService.buildAdvice(
-        party: _currentParty,
-        event: event,
-      );
+      _isAdviceLoading = true;
+    });
+
+    final advice = await AgentAiService.buildTowerAdvice(
+      playerData: widget.playerData,
+      party: _currentParty,
+      event: event,
+    );
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _isAdviceLoading = false;
+      _adviceMessage = advice;
     });
   }
 
@@ -319,12 +379,17 @@ class _TowerScreenState extends State<TowerScreen> {
     setState(() {
       _nextEnemyModifier += outcome.enemyModifierDelta;
       _nextRewardModifier += outcome.rewardModifierDelta;
+      widget.playerData.silver =
+          (widget.playerData.silver + outcome.silverDelta).clamp(0, 1 << 30);
+      widget.playerData.gold = (widget.playerData.gold + outcome.goldDelta)
+          .clamp(0, 1 << 30);
       _sessionSilver += outcome.silverDelta;
       _sessionGold += outcome.goldDelta;
       _sessionItems = [..._sessionItems, ...outcome.immediateItems];
       _liveLog.addAll(outcome.logLines);
       _pendingDecision = null;
       _adviceMessage = null;
+      _isAdviceLoading = false;
     });
     widget.playerData.lastTowerSummary = _liveLog.join('\n');
     widget.onDataChanged();
@@ -370,8 +435,10 @@ class _TowerScreenState extends State<TowerScreen> {
     }
 
     final cost = TowerRunService.quickRecoverySilverCost(_currentParty);
-    final recovered =
-        TowerRunService.quickRecoverWithSilver(widget.playerData, _currentParty);
+    final recovered = TowerRunService.quickRecoverWithSilver(
+      widget.playerData,
+      _currentParty,
+    );
     if (!recovered) {
       _showSnackBar('Silver ไม่พอ ต้องใช้ $cost');
       return;
@@ -387,8 +454,10 @@ class _TowerScreenState extends State<TowerScreen> {
       return;
     }
 
-    final recovered =
-        TowerRunService.quickRecoverWithItem(widget.playerData, _currentParty);
+    final recovered = TowerRunService.quickRecoverWithItem(
+      widget.playerData,
+      _currentParty,
+    );
     if (!recovered) {
       _showSnackBar('ไม่มี Field Ration ในคลัง');
       return;
@@ -440,6 +509,8 @@ class _TowerScreenState extends State<TowerScreen> {
       children: [
         _buildProgressHeader(),
         const SizedBox(height: 16),
+        _buildEntryCard(),
+        const SizedBox(height: 16),
         _buildPartyCard(currentParty),
         const SizedBox(height: 16),
         _buildRecoveryCard(),
@@ -453,6 +524,8 @@ class _TowerScreenState extends State<TowerScreen> {
         _buildSelectionCard(availableHeroes),
         const SizedBox(height: 16),
         _buildLatestResultCard(),
+        const SizedBox(height: 16),
+        _buildHeroStatusCard(),
       ],
     );
   }
@@ -512,6 +585,91 @@ class _TowerScreenState extends State<TowerScreen> {
     );
   }
 
+  Widget _buildEntryCard() {
+    final options = _entryFloorOptions;
+    final nextNewFloor = widget.playerData.highestTowerFloor + 1;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Warp Plan',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'เลือกชั้นเริ่มต้นได้เฉพาะชั้นที่เคยผ่านแล้ว หรือชั้นใหม่ถัดไป การวาปเข้าใช้หินวาป 1 ก้อนและมีค่าผ่านทาง ส่วนวาปออกฟรี',
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<int>(
+              initialValue: options.contains(_selectedEntryFloor)
+                  ? _selectedEntryFloor
+                  : options.last,
+              decoration: const InputDecoration(
+                labelText: 'ชั้นเริ่มต้น',
+                border: OutlineInputBorder(),
+              ),
+              items: options
+                  .map(
+                    (floor) => DropdownMenuItem<int>(
+                      value: floor,
+                      child: Text(
+                        floor == nextNewFloor
+                            ? 'ชั้น $floor (ชั้นใหม่)'
+                            : 'ชั้น $floor',
+                      ),
+                    ),
+                  )
+                  .toList(),
+              onChanged: _isRunActive
+                  ? null
+                  : (value) {
+                      if (value == null) {
+                        return;
+                      }
+                      setState(() {
+                        _selectedEntryFloor = value;
+                      });
+                    },
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 16,
+              runSpacing: 8,
+              children: [
+                Text('ค่าเข้าหอ: $_entryFee Silver'),
+                Text('Warp Stone: $_warpStoneCount'),
+                Text('Field Ration: $_rationCount'),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              TowerRunService.canEnterTower(
+                    widget.playerData,
+                    _selectedEntryFloor,
+                  )
+                  ? 'พร้อมวาปเข้าสำรวจ'
+                  : 'ยังเข้าหอไม่ได้: ต้องมี Tower Warp Stone และ Silver ให้พอ',
+              style: TextStyle(
+                color:
+                    TowerRunService.canEnterTower(
+                      widget.playerData,
+                      _selectedEntryFloor,
+                    )
+                    ? Colors.green
+                    : Colors.redAccent,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildPartyCard(PartyModel party) {
     return Card(
       child: Padding(
@@ -564,8 +722,9 @@ class _TowerScreenState extends State<TowerScreen> {
                 spacing: 8,
                 runSpacing: 8,
                 children: party.members.map((hero) {
-                  final classTitle =
-                      ClassProgressionService.definitionFor(hero.currentClass).title;
+                  final classTitle = ClassProgressionService.definitionFor(
+                    hero.currentClass,
+                  ).title;
                   final trailing = hero.isRecovering
                       ? ' • Recover ${_formatDuration(hero.recoveryCooldownRemaining)}'
                       : '';
@@ -617,8 +776,9 @@ class _TowerScreenState extends State<TowerScreen> {
                     label: const Text('เร่งพักด้วยเงิน'),
                   ),
                   FilledButton.tonalIcon(
-                    onPressed:
-                        _isRunActive || _rationCount <= 0 ? null : _quickRecoverWithItem,
+                    onPressed: _isRunActive || _rationCount <= 0
+                        ? null
+                        : _quickRecoverWithItem,
                     icon: const Icon(Icons.restaurant_outlined),
                     label: const Text('ใช้ Field Ration'),
                   ),
@@ -651,7 +811,9 @@ class _TowerScreenState extends State<TowerScreen> {
             ),
             FilledButton.icon(
               key: const Key('tower_start_button'),
-              onPressed: _isRunActive || _partyNeedsRecovery ? null : _startRealtimeRun,
+              onPressed: _isRunActive || _partyNeedsRecovery
+                  ? null
+                  : _startRealtimeRun,
               icon: const Icon(Icons.play_arrow_outlined),
               label: const Text('เริ่มสำรวจแบบเรียลไทม์'),
             ),
@@ -693,17 +855,35 @@ class _TowerScreenState extends State<TowerScreen> {
               ),
               const SizedBox(height: 12),
             ],
+            if (_isAdviceLoading) ...[
+              const Row(
+                children: [
+                  SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  SizedBox(width: 8),
+                  Text('กำลังขอคำแนะนำจาก AI...'),
+                ],
+              ),
+              const SizedBox(height: 12),
+            ],
             Wrap(
               spacing: 12,
               runSpacing: 12,
               children: [
                 for (final option in event.options)
                   FilledButton.tonal(
-                    onPressed: () => _applyDecision(option.id),
+                    onPressed: _isAdviceLoading
+                        ? null
+                        : () => _applyDecision(option.id),
                     child: Text(option.title),
                   ),
                 OutlinedButton.icon(
-                  onPressed: _remainingAdvice > 0 ? _askForAdvice : null,
+                  onPressed: _remainingAdvice > 0 && !_isAdviceLoading
+                      ? _askForAdvice
+                      : null,
                   icon: const Icon(Icons.record_voice_over_outlined),
                   label: const Text('ขอคำแนะนำ'),
                 ),
@@ -734,12 +914,15 @@ class _TowerScreenState extends State<TowerScreen> {
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
-            const Text('เลือกได้สูงสุด 5 คน และต้องกดบันทึกปาร์ตี้ก่อนเริ่มปีนหอ'),
+            const Text(
+              'เลือกได้สูงสุด 5 คน และต้องกดบันทึกปาร์ตี้ก่อนเริ่มปีนหอ',
+            ),
             const SizedBox(height: 12),
             ...availableHeroes.map((hero) {
               final selected = _selectedHeroIds.contains(hero.id);
-              final classTitle =
-                  ClassProgressionService.definitionFor(hero.currentClass).title;
+              final classTitle = ClassProgressionService.definitionFor(
+                hero.currentClass,
+              ).title;
               return CheckboxListTile(
                 value: selected,
                 controlAffinity: ListTileControlAffinity.leading,
@@ -759,6 +942,98 @@ class _TowerScreenState extends State<TowerScreen> {
                 ),
               );
             }),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeroStatusCard() {
+    final reports =
+        _lastFloorOutcome?.heroReports ??
+        _currentParty.members
+            .map(
+              (hero) => TowerHeroActionReport(
+                heroId: hero.id,
+                heroName: hero.name,
+                action: hero.currentAction ?? 'รอคำสั่ง',
+                target: hero.currentTarget,
+                skillName: null,
+                itemUsed: null,
+                remainingHp: hero.currentStats.currentHp,
+                maxHp: hero.currentStats.maxHp,
+                remainingEng: hero.currentStats.currentEng,
+                maxEng: hero.currentStats.maxEng,
+                remainingMana: hero.currentMana,
+                maxMana: hero.maxMana,
+                bodyCondition: hero.bodyCondition,
+                statusEffects: List<String>.from(hero.statusEffects),
+                cooldowns: Map<String, int>.from(hero.skillCooldowns),
+              ),
+            )
+            .toList();
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Hero Live Status',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 12),
+            if (reports.isEmpty)
+              const Text('ยังไม่มีข้อมูลการต่อสู้รายตัว')
+            else
+              ...reports.map((report) {
+                final cooldownText = report.cooldowns.isEmpty
+                    ? 'ไม่มีคูลดาวน์ค้าง'
+                    : report.cooldowns.entries
+                          .map((entry) => '${entry.key} ${entry.value}')
+                          .join(', ');
+                final effects = report.statusEffects.isEmpty
+                    ? 'ปกติ'
+                    : report.statusEffects.join(', ');
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade50,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.grey.shade300),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        report.heroName,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text('กำลังทำ: ${report.action}'),
+                      if (report.target != null)
+                        Text('เป้าหมาย: ${report.target}'),
+                      if (report.skillName != null)
+                        Text('สกิลล่าสุด: ${report.skillName}'),
+                      if (report.itemUsed != null)
+                        Text('ไอเทมล่าสุด: ${report.itemUsed}'),
+                      const SizedBox(height: 6),
+                      Text(
+                        'HP ${report.remainingHp}/${report.maxHp} • ENG ${report.remainingEng}/${report.maxEng} • MP ${report.remainingMana}/${report.maxMana}',
+                      ),
+                      Text(
+                        'สภาพร่างกาย: ${report.bodyCondition} • สถานะ: $effects',
+                      ),
+                      Text('คูลดาวน์: $cooldownText'),
+                    ],
+                  ),
+                );
+              }),
           ],
         ),
       ),

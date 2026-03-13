@@ -7,6 +7,7 @@ import '../models/player_data.dart';
 import '../services/class_progression_service.dart';
 import '../services/class_quest_service.dart';
 import '../services/item_usage_service.dart';
+import '../services/skill_progression_service.dart';
 import '../utils/leveling_policy.dart';
 
 class HeroDetailScreen extends StatefulWidget {
@@ -55,11 +56,7 @@ class HeroDetailScreen extends StatefulWidget {
           currentEng: 80,
           luk: 20,
         ),
-        aptitudes: const {
-          'Knight': 0.60,
-          'Farmer': 0.25,
-          'Thief': 0.15,
-        },
+        aptitudes: const {'Knight': 0.60, 'Farmer': 0.25, 'Thief': 0.15},
         currentClass: 'vanguard',
         unlockedClasses: const ['novice', 'vanguard'],
       ),
@@ -78,10 +75,9 @@ class _HeroDetailScreenState extends State<HeroDetailScreen> {
   String get _currentClassTitle =>
       ClassProgressionService.definitionFor(hero.currentClass).title;
 
-  int get _sealCount => playerData?.itemQuantity(
-            ClassProgressionService.classTrialSealItemId,
-          ) ??
-          0;
+  int get _sealCount =>
+      playerData?.itemQuantity(ClassProgressionService.classTrialSealItemId) ??
+      0;
 
   List<ClassQuestDefinition> get _visibleQuests {
     return ClassQuestService.definitions.where((quest) {
@@ -123,16 +119,18 @@ class _HeroDetailScreenState extends State<HeroDetailScreen> {
     _notifyChanged();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('เริ่มเควส ${ClassQuestService.definitionFor(questId).title} แล้ว'),
+        content: Text(
+          'เริ่มเควส ${ClassQuestService.definitionFor(questId).title} แล้ว',
+        ),
       ),
     );
   }
 
   void _completeQuest(String questId) {
     if (!ClassQuestService.canCompleteQuest(hero, questId)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('เงื่อนไขเควสยังไม่ครบ')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('เงื่อนไขเควสยังไม่ครบ')));
       return;
     }
 
@@ -140,8 +138,9 @@ class _HeroDetailScreenState extends State<HeroDetailScreen> {
     _notifyChanged();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content:
-            Text('เควส ${ClassQuestService.definitionFor(questId).title} สำเร็จแล้ว'),
+        content: Text(
+          'เควส ${ClassQuestService.definitionFor(questId).title} สำเร็จแล้ว',
+        ),
       ),
     );
   }
@@ -156,9 +155,9 @@ class _HeroDetailScreenState extends State<HeroDetailScreen> {
     if (result.success) {
       _notifyChanged();
     }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(result.message)),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(result.message)));
   }
 
   void _equipItem(String itemId) {
@@ -171,9 +170,9 @@ class _HeroDetailScreenState extends State<HeroDetailScreen> {
     if (result.success) {
       _notifyChanged();
     }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(result.message)),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(result.message)));
   }
 
   void _unequipSlot(EquipmentSlot slot) {
@@ -186,9 +185,9 @@ class _HeroDetailScreenState extends State<HeroDetailScreen> {
     if (result.success) {
       _notifyChanged();
     }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(result.message)),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(result.message)));
   }
 
   void _attemptClassChange(String classId) {
@@ -207,8 +206,12 @@ class _HeroDetailScreenState extends State<HeroDetailScreen> {
       return;
     }
 
-    final directUnlock = ClassProgressionService.canUnlockOrSwitch(hero, classId);
-    final useOverride = !directUnlock &&
+    final directUnlock = ClassProgressionService.canUnlockOrSwitch(
+      hero,
+      classId,
+    );
+    final useOverride =
+        !directUnlock &&
         !ClassProgressionService.isUnlocked(hero, classId) &&
         hasOverride;
     if (useOverride) {
@@ -266,6 +269,8 @@ class _HeroDetailScreenState extends State<HeroDetailScreen> {
             const SizedBox(height: 16),
             _buildProgressCard(),
             const SizedBox(height: 16),
+            _buildSkillCard(),
+            const SizedBox(height: 16),
             _buildEquipmentCard(),
             const SizedBox(height: 16),
             _buildItemUsageCard(),
@@ -304,12 +309,16 @@ class _HeroDetailScreenState extends State<HeroDetailScreen> {
             children: [
               Text(
                 hero.name,
-                style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                style: const TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
               Row(
                 children: List.generate(
                   hero.rarity,
-                  (index) => const Icon(Icons.star, color: Colors.amber, size: 20),
+                  (index) =>
+                      const Icon(Icons.star, color: Colors.amber, size: 20),
                 ),
               ),
               const SizedBox(height: 8),
@@ -321,7 +330,9 @@ class _HeroDetailScreenState extends State<HeroDetailScreen> {
                   color: Colors.indigo,
                 ),
               ),
-              Text('สายถนัด: ${hero.currentJobRole} | EXP Stage: ${hero.experienceStage}'),
+              Text(
+                'สายถนัด: ${hero.currentJobRole} | EXP Stage: ${hero.experienceStage}',
+              ),
               Text('เพศ: ${hero.gender} | อายุ: ${hero.age} ปี'),
             ],
           ),
@@ -344,16 +355,32 @@ class _HeroDetailScreenState extends State<HeroDetailScreen> {
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             const Divider(),
-            _buildStatRow('HP', '${stats.currentHp} / ${stats.maxHp}', Colors.green),
-            _buildStatRow('พลังงาน', '${stats.currentEng} / ${stats.maxEng}', Colors.blue),
+            _buildStatRow(
+              'HP',
+              '${stats.currentHp} / ${stats.maxHp}',
+              Colors.green,
+            ),
+            _buildStatRow(
+              'พลังงาน',
+              '${stats.currentEng} / ${stats.maxEng}',
+              Colors.blue,
+            ),
             const SizedBox(height: 8),
             Row(
               children: [
                 Expanded(
-                  child: _buildStatBadge('ATK', stats.atk.toString(), Colors.redAccent),
+                  child: _buildStatBadge(
+                    'ATK',
+                    stats.atk.toString(),
+                    Colors.redAccent,
+                  ),
                 ),
                 Expanded(
-                  child: _buildStatBadge('DEF', stats.def.toString(), Colors.blueGrey),
+                  child: _buildStatBadge(
+                    'DEF',
+                    stats.def.toString(),
+                    Colors.blueGrey,
+                  ),
                 ),
               ],
             ),
@@ -361,10 +388,18 @@ class _HeroDetailScreenState extends State<HeroDetailScreen> {
             Row(
               children: [
                 Expanded(
-                  child: _buildStatBadge('SPD', stats.spd.toString(), Colors.orange),
+                  child: _buildStatBadge(
+                    'SPD',
+                    stats.spd.toString(),
+                    Colors.orange,
+                  ),
                 ),
                 Expanded(
-                  child: _buildStatBadge('LUK', stats.luk.toString(), Colors.purple),
+                  child: _buildStatBadge(
+                    'LUK',
+                    stats.luk.toString(),
+                    Colors.purple,
+                  ),
                 ),
               ],
             ),
@@ -407,6 +442,11 @@ class _HeroDetailScreenState extends State<HeroDetailScreen> {
             const SizedBox(height: 12),
             Text('Bond: ${hero.bond} / 100'),
             Text('Faith: ${hero.faith} / 100'),
+            Text('Mana: ${hero.currentMana} / ${hero.maxMana}'),
+            Text('Body Condition: ${hero.bodyCondition}'),
+            Text(
+              'Status Effects: ${hero.statusEffects.isEmpty ? 'None' : hero.statusEffects.join(', ')}',
+            ),
             Text('คลาสปัจจุบัน: $_currentClassTitle'),
             Text(
               hero.isRecovering
@@ -416,6 +456,79 @@ class _HeroDetailScreenState extends State<HeroDetailScreen> {
             if (playerData != null) ...[
               const SizedBox(height: 8),
               Text('Class Trial Seal: $_sealCount'),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSkillCard() {
+    final skills = SkillProgressionService.unlockedSkillsFor(hero);
+    final nextUnlocks = SkillProgressionService.nextUnlocksFor(hero);
+
+    return Card(
+      elevation: 2,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Skills',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'สกิลจะเปิดตามคลาสปัจจุบันและเลเวล เมื่อเปลี่ยนคลาส รูปแบบการใช้สกิลจะเปลี่ยนตามไปด้วย',
+            ),
+            const SizedBox(height: 12),
+            if (skills.isEmpty)
+              const Text('ยังไม่มีสกิลที่ปลดล็อก')
+            else
+              ...skills.map((skill) {
+                final cooldown = hero.skillCooldownFor(skill.id);
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade50,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.grey.shade300),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        skill.name,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(skill.description),
+                      const SizedBox(height: 6),
+                      Text(
+                        'Role: ${skill.role} • MP ${skill.manaCost} • Cooldown ${skill.cooldownTurns}',
+                      ),
+                      if (cooldown > 0) Text('คูลดาวน์ค้าง: $cooldown'),
+                    ],
+                  ),
+                );
+              }),
+            if (nextUnlocks.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              const Text(
+                'Next Unlocks',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              ...nextUnlocks
+                  .take(3)
+                  .map(
+                    (skill) => Text('${skill.name} • ${skill.unlockCondition}'),
+                  ),
             ],
           ],
         ),
@@ -563,8 +676,7 @@ class _HeroDetailScreenState extends State<HeroDetailScreen> {
                 ),
               );
             }),
-            if (_equippableItems.isEmpty)
-              const Text('ยังไม่มีอุปกรณ์ในคลัง'),
+            if (_equippableItems.isEmpty) const Text('ยังไม่มีอุปกรณ์ในคลัง'),
           ],
         ),
       ),
@@ -594,7 +706,10 @@ class _HeroDetailScreenState extends State<HeroDetailScreen> {
               const Text('ยังไม่มีเควสอาชีพที่เปิดให้เริ่มสำหรับฮีโร่คนนี้')
             else
               ...quests.map((quest) {
-                final status = ClassQuestService.questStatusLabel(hero, quest.id);
+                final status = ClassQuestService.questStatusLabel(
+                  hero,
+                  quest.id,
+                );
                 final objectives = quest.objectives(hero);
                 return Container(
                   margin: const EdgeInsets.only(bottom: 12),
@@ -643,7 +758,10 @@ class _HeroDetailScreenState extends State<HeroDetailScreen> {
                               onPressed: () => _startQuest(quest.id),
                               child: const Text('Start Quest'),
                             ),
-                          if (ClassQuestService.canCompleteQuest(hero, quest.id))
+                          if (ClassQuestService.canCompleteQuest(
+                            hero,
+                            quest.id,
+                          ))
                             FilledButton(
                               onPressed: () => _completeQuest(quest.id),
                               child: const Text('Complete Quest'),
@@ -681,10 +799,15 @@ class _HeroDetailScreenState extends State<HeroDetailScreen> {
             const SizedBox(height: 12),
             ...definitions.map((definition) {
               final isCurrent = hero.currentClass == definition.id;
-              final isUnlocked =
-                  ClassProgressionService.isUnlocked(hero, definition.id);
+              final isUnlocked = ClassProgressionService.isUnlocked(
+                hero,
+                definition.id,
+              );
               final meetsRequirement =
-                  ClassProgressionService.meetsDirectRequirement(hero, definition.id);
+                  ClassProgressionService.meetsDirectRequirement(
+                    hero,
+                    definition.id,
+                  );
               final canUseOverride = !meetsRequirement && _sealCount > 0;
               final tierLabel = switch (definition.tier) {
                 0 => 'Base',
@@ -745,7 +868,9 @@ class _HeroDetailScreenState extends State<HeroDetailScreen> {
                             onPressed: isUnlocked || meetsRequirement
                                 ? () => _attemptClassChange(definition.id)
                                 : null,
-                            child: Text(isUnlocked ? 'Switch' : 'Unlock with Stats'),
+                            child: Text(
+                              isUnlocked ? 'Switch' : 'Unlock with Stats',
+                            ),
                           ),
                         if (!isCurrent && canUseOverride)
                           FilledButton(
@@ -783,7 +908,9 @@ class _HeroDetailScreenState extends State<HeroDetailScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('${entry.key} - ${(entry.value * 100).toStringAsFixed(1)}%'),
+                    Text(
+                      '${entry.key} - ${(entry.value * 100).toStringAsFixed(1)}%',
+                    ),
                     const SizedBox(height: 4),
                     LinearProgressIndicator(
                       value: entry.value,
@@ -831,7 +958,10 @@ class _HeroDetailScreenState extends State<HeroDetailScreen> {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Text(label, style: const TextStyle(fontWeight: FontWeight.bold)),
-          Text(value, style: TextStyle(color: color, fontWeight: FontWeight.bold)),
+          Text(
+            value,
+            style: TextStyle(color: color, fontWeight: FontWeight.bold),
+          ),
         ],
       ),
     );
@@ -850,9 +980,16 @@ class _HeroDetailScreenState extends State<HeroDetailScreen> {
         children: [
           Text(
             label,
-            style: TextStyle(fontSize: 12, color: color, fontWeight: FontWeight.bold),
+            style: TextStyle(
+              fontSize: 12,
+              color: color,
+              fontWeight: FontWeight.bold,
+            ),
           ),
-          Text(value, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+          Text(
+            value,
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+          ),
         ],
       ),
     );
@@ -892,14 +1029,24 @@ class _HeroDetailScreenState extends State<HeroDetailScreen> {
 
   String _bonusLabel(HeroStats bonus) {
     final parts = <String>[];
-    if (bonus.maxHp != 0) parts.add('HP ${bonus.maxHp > 0 ? '+' : ''}${bonus.maxHp}');
-    if (bonus.atk != 0) parts.add('ATK ${bonus.atk > 0 ? '+' : ''}${bonus.atk}');
-    if (bonus.def != 0) parts.add('DEF ${bonus.def > 0 ? '+' : ''}${bonus.def}');
-    if (bonus.spd != 0) parts.add('SPD ${bonus.spd > 0 ? '+' : ''}${bonus.spd}');
+    if (bonus.maxHp != 0) {
+      parts.add('HP ${bonus.maxHp > 0 ? '+' : ''}${bonus.maxHp}');
+    }
+    if (bonus.atk != 0) {
+      parts.add('ATK ${bonus.atk > 0 ? '+' : ''}${bonus.atk}');
+    }
+    if (bonus.def != 0) {
+      parts.add('DEF ${bonus.def > 0 ? '+' : ''}${bonus.def}');
+    }
+    if (bonus.spd != 0) {
+      parts.add('SPD ${bonus.spd > 0 ? '+' : ''}${bonus.spd}');
+    }
     if (bonus.maxEng != 0) {
       parts.add('ENG ${bonus.maxEng > 0 ? '+' : ''}${bonus.maxEng}');
     }
-    if (bonus.luk != 0) parts.add('LUK ${bonus.luk > 0 ? '+' : ''}${bonus.luk}');
+    if (bonus.luk != 0) {
+      parts.add('LUK ${bonus.luk > 0 ? '+' : ''}${bonus.luk}');
+    }
     return parts.join(' • ');
   }
 }
